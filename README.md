@@ -10,7 +10,7 @@ stops for you.
 
 ## Install
 
-Download the file for your computer from the [latest release](https://github.com/agazso/music/releases/latest).
+Download the file for your computer from the [latest release](https://github.com/snaha/music/releases/latest).
 
 | Computer | File |
 |---|---|
