@@ -2,3 +2,10 @@
 navidrome/data/
 # playwright screenshots from verification runs
 .playwright-mcp/
+# local credentials
+.env
+.env.*
+!.env.example
+
+# local web research output
+.firecrawl/

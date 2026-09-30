@@ -2,3 +2,7 @@ node_modules
 bin
 dist
 release
+preload.bundle.cjs
+
+native/build/
+.local-app/

@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { coverUrl, session } from './api.svelte';
-  import { jumpRandom, player, seek, setOrder, toggle, type Order } from './player.svelte';
+  import { session } from './api.svelte';
+  import { jumpRandom, next, prev, player, seek, setOrder, toggle, type Order } from './player.svelte';
+  import { spotify } from './spotify.svelte';
   import { grid } from './library.svelte';
   import Queue from './Queue.svelte';
   import Share from './Share.svelte';
@@ -11,9 +12,9 @@
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   // random picks songs from the albums the grid shows
   // icons after VLC's: an arrow into a stop bar for in order, crossing arrows for shuffle; a die for random, which VLC lacks
-  const ORDERS: Record<Order, string> = { normal: 'In order', shuffle: 'Shuffle album', random: 'Random from the grid' };
+  const ORDERS: Record<Order, string> = { normal: 'In order', shuffle: 'Shuffle queue', random: 'Random from the grid' };
   // the bottom-right menu: share, visualizer and play order. It stays open until closed like the song list
-  let menu = $state(false), key: HTMLElement, panel: HTMLElement;
+  let menu = $state(false), key = $state<HTMLElement>(), panel = $state<HTMLElement>();
   // hot corners: the pointer pushed into a bottom screen corner opens what that corner holds, which then stays until closed:
   // the song list on the left (only with a song loaded, like the button it stands in for), the menu on the right.
   // mouse only, and only while the bar shows
@@ -43,6 +44,7 @@
   <div class="menu-panel" class:open={menu} role="menu" aria-hidden={!menu} bind:this={panel}>
     {#if session.admin}<button role="menuitem" tabindex={menu ? 0 : -1} class:on={player.view === 'share'} onclick={share}>Share</button>{/if}
     <button role="menuitem" tabindex={menu ? 0 : -1} onclick={visualize}>Visualizer</button>
+    <button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => { player.queueOpen = !player.queueOpen; menu = false; }}>Queue ({player.queue.length})</button>
     <span class="rule"></span>
     <!-- stays open after a jump, so it can be pressed again right away -->
     <button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => jumpRandom(grid)}>Shuffle</button>
@@ -60,19 +62,27 @@
       {/each}
     </span>
   </div>
-  <div class="bar" class:hidden={hidden && !player.queueOpen && !player.view && !menu} class:lit={player.queueOpen || !!player.view || menu} bind:clientHeight={barHeight}>
+  {#if player.error || player.pending || player.requesting}
+    <div class="playback-status" role="status">{player.error || (player.requesting ? 'Loading tracks…' : 'Connecting playback…')}
+      {#if player.error}<button onclick={() => { player.viewFrom = 'right'; player.view = 'settings'; }}>Settings</button><button onclick={() => (player.error = '')} aria-label="Dismiss playback message">×</button>{/if}
+    </div>
+  {/if}
+  <div class="bar" class:hidden={hidden && !player.queueOpen && !player.view && !menu && !player.pending && !player.error} class:lit={player.queueOpen || !!player.view || menu} bind:clientHeight={barHeight}>
     {#if player.song}
       <!-- cover + title + artist: one control that opens the song list -->
       <button class="left" onclick={() => (player.queueOpen = !player.queueOpen)} aria-label="Show songs" aria-expanded={player.queueOpen}>
-        <img src={coverUrl(player.song.coverArt, 96)} alt="" />
+        <img src={player.song.cover} alt="" />
         <span class="meta"><b>{player.song.title}</b> <span>{player.song.artist}</span></span>
       </button>
     {:else}
       <span class="left"></span>
     {/if}
+    {#if player.song?.source === 'spotify'}<button class="provider" onclick={() => window.spotify!.external(player.song!.externalUrl!).catch((e) => (player.error = e.message))}>Spotify ↗<small>{spotify.deviceName}</small></button>{/if}
     <span class="ctl">
       <span class="btns">
-        <button onclick={toggle} disabled={!player.song} aria-label={player.playing ? 'Pause' : 'Play'}>{player.playing ? '❚❚' : '▶'}</button>
+        <button onclick={prev} disabled={!player.song} aria-label="Previous track">‹</button>
+        <button onclick={toggle} disabled={!player.queue.length} aria-label={player.playing || player.pending ? 'Pause' : 'Play'}>{player.pending ? '…' : player.playing ? '❚❚' : '▶'}</button>
+        <button onclick={next} disabled={!player.song} aria-label="Next track">›</button>
       </span>
       <span class="time">{fmt(player.time)} / {fmt(player.duration)}</span>
     </span>
@@ -80,15 +90,19 @@
     <button class="key" class:down={menu} bind:this={key} onclick={() => (menu = !menu)} aria-haspopup="menu" aria-expanded={menu} aria-label="Menu">
       <svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
     </button>
-    <div class="progress" role="slider" tabindex="0" aria-label="Seek" aria-valuenow={player.time}
+    <div class="progress" role="slider" tabindex="0" aria-label="Seek" aria-valuemin={0} aria-valuemax={player.duration || 0} aria-valuenow={player.time}
       onclick={(e) => seek(e.offsetX / e.currentTarget.clientWidth)}
-      onkeydown={(e) => { if (e.key === 'ArrowLeft') seek((player.time - 10) / player.duration); if (e.key === 'ArrowRight') seek((player.time + 10) / player.duration); }}>
+      onkeydown={(e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); seek((player.time + (e.key === 'ArrowLeft' ? -10 : 10)) / player.duration); } }}>
       <i style:width="{player.duration ? (player.time / player.duration) * 100 : 0}%"></i>
     </div>
   </div>
 {/if}
 
 <style>
+  .playback-status { position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%); max-width: min(90vw, 720px); background: #161616f5; color: #eee; padding: 12px 16px; border: 1px solid #555; border-radius: 6px; z-index: 5; font-size: 14px; line-height: 1.5; }
+  .playback-status button { background: none; color: white; border: 1px solid #777; border-radius: 3px; padding: 4px 8px; margin-left: 10px; cursor: pointer; }
+  .provider small { display: block; font-size: 10px; opacity: .6; }
+  .bar button.provider { font-size: 13px; }
   .bar {
     --s: clamp(0.85px, 100vw / 1600, 1.3px);
     position: fixed; left: 0; right: 0; bottom: 0; height: calc(96 * var(--s)); padding: 0 calc(16 * var(--s));
@@ -142,7 +156,6 @@
   }
   .ctl { display: flex; flex-direction: column; align-items: center; gap: 0; flex-shrink: 0; }
   .btns { display: flex; align-items: center; }
-  .btns svg { display: block; }
   .time { opacity: .7; font-size: .7em; font-variant-numeric: tabular-nums; }
   /* phones: let title/artist take two lines */
   @media (max-width: 700px) {

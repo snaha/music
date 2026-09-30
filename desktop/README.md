@@ -12,7 +12,12 @@ chosen on first run and reused, so QR codes and bookmarks stay valid across rest
     pnpm navidrome          # downloads the navidrome binary for this platform into bin/
     pnpm build:frontend     # builds ../frontend into dist/
     pnpm dev                # runs the app from source
+    pnpm dev:capture        # macOS: local app bundle with Spotify-only visualization
     pnpm dist               # all of the above, then AppImage and .deb into release/
+
+`pnpm dev` also builds the frontend into the desktop output folder and builds the sandboxed preload bridge.
+For the experimental Spotify connection, combined library and mixed queues, see
+[Connected music](CONNECTED-MUSIC.md). Spotify authentication uses a client ID and PKCE; no client secret is needed.
 
 Data lives in the app's user-data folder (`~/.config/Music/navidrome` on Linux): the database, cache and
 `credentials.json` (admin and share passwords, ports, the window frame choice). On macOS the folder is

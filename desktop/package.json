@@ -9,23 +9,33 @@
   "scripts": {
     "navidrome": "node scripts/fetch-navidrome.mjs",
     "build:frontend": "cd ../frontend && pnpm build --outDir ../desktop/dist --emptyOutDir",
-    "dev": "electron .",
-    "dist": "pnpm navidrome && pnpm build:frontend && electron-builder --linux --publish never",
-    "dist:mac": "pnpm navidrome && pnpm build:frontend && electron-builder --mac --arm64 --publish never",
-    "pack:mac:dir": "electron-builder --mac --arm64 --dir --publish never",
-    "pack:mac": "electron-builder --mac dmg zip --arm64 --prepackaged release/mac-arm64/Music.app --publish never"
+    "build:preload": "node scripts/build-preload.mjs",
+    "test": "node --test spotify.test.js spotify-library.test.js spotify-capture.test.js player.test.js && node --experimental-strip-types --test ../frontend/tests/*.test.ts",
+    "dev": "pnpm build:preload && pnpm build:frontend && electron .",
+    "dist": "pnpm navidrome && pnpm build:preload && pnpm build:frontend && electron-builder --linux --publish never",
+    "dist:mac": "pnpm build:native && pnpm navidrome && pnpm build:preload && pnpm build:frontend && electron-builder --mac --arm64 --publish never",
+    "pack:mac:dir": "pnpm build:native && pnpm build:preload && electron-builder --mac --arm64 --dir --publish never",
+    "pack:mac": "electron-builder --mac dmg zip --arm64 --prepackaged release/mac-arm64/Music.app --publish never",
+    "build:native": "node scripts/build-native.mjs",
+    "dev:capture": "pnpm build:native && pnpm build:preload && pnpm build:frontend && node scripts/repo-app.mjs && ./.local-app/Music.app/Contents/MacOS/Electron"
   },
   "devDependencies": {
     "electron": "44.4.5",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2"
   },
   "build": {
     "appId": "dev.musicapp.desktop",
     "asar": false,
     "files": [
       "main.js",
-      "preload.cjs",
-      "dist/**/*"
+      "spotify.js",
+      "spotify-model.js",
+      "preload.bundle.cjs",
+      "dist/**/*",
+      "spotify-library.js",
+      "native/build/*.node",
+      "spotify-capture.js"
     ],
     "extraResources": [
       {
@@ -53,7 +63,10 @@
       "category": "public.app-category.music",
       "icon": "build/icon.png",
       "hardenedRuntime": true,
-      "darkModeSupport": true
+      "darkModeSupport": true,
+      "extendInfo": {
+        "NSAudioCaptureUsageDescription": "Music uses Spotify audio on this Mac to animate the visualizer. Audio is never saved or uploaded."
+      }
     },
     "dmg": {
       "contents": [

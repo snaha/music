@@ -1,5 +1,12 @@
-// injected by the Electron preload (desktop/preload.cjs)
+// injected by the Electron preload (desktop/preload.js)
 interface Window {
+  spotifyCapture?: {
+    start(): Promise<{ status: string; message: string; sampleRate: number }>;
+    stop(): Promise<void>;
+    onSamples(callback: (data: { samples: Float32Array; sampleRate: number; sequence: number }) => void): () => void;
+    onState(callback: (state: { status: string; message: string; peak: number }) => void): () => void;
+  };
+  spotify?: import('./lib/music').SpotifyBridge;
   desktop?: {
     url: string; username: string; password: string;
     // ports and the share account's password for the QR code; the LAN address is looked up on demand
@@ -12,3 +19,8 @@ interface Window {
 
 // the dev machine's LAN address, from vite.config.ts
 declare const __LAN_IP__: string;
+
+// AudioWorkletGlobalScope (not included in TypeScript's DOM library).
+declare const sampleRate: number;
+declare class AudioWorkletProcessor { readonly port: MessagePort; }
+declare function registerProcessor(name: string, processor: typeof AudioWorkletProcessor): void;

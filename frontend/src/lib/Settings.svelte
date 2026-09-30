@@ -1,5 +1,6 @@
 <script lang="ts">
   import Drawer from './Drawer.svelte';
+  import SpotifySettings from './SpotifySettings.svelte';
   import { session } from './api.svelte';
   import { bg, clearBackground, importBackground } from './background.svelte';
 
@@ -11,6 +12,7 @@
 
 <Drawer from="right" {onclose}>
   <div class="body">
+    <SpotifySettings />
     <section>
       <h2>appearance</h2>
       <label><input type="checkbox" bind:checked={art} /> with art</label>

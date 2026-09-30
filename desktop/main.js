@@ -1,4 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, safeStorage, shell } from 'electron';
+import { SpotifyCapture } from './spotify-capture.js';
+import { SpotifyService } from './spotify.js';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -70,6 +72,9 @@ async function waitFor(url) {
 }
 
 let navidrome;
+let spotify;
+let capture;
+let captureOwner;
 
 app.whenReady().then(async () => {
   // macOS takes Cmd+Q and the Dock/app-switcher quit from the app menu; without one the app can't be quit and a
@@ -97,6 +102,38 @@ app.whenReady().then(async () => {
   serveFrontend(st.webPort);
 
   const page = `http://127.0.0.1:${st.webPort}/`;
+  spotify = new SpotifyService({
+    directory: path.join(app.getPath('userData'), 'spotify'), secureStorage: safeStorage,
+    openExternal: (url) => shell.openExternal(url),
+    notify: (snapshot) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send('spotify:changed', snapshot); },
+  });
+  await spotify.init();
+  if (!spotify.config.clientId && process.env.SPOTIFY_CLIENT_ID) spotify.config.clientId = process.env.SPOTIFY_CLIENT_ID;
+  const handleSpotify = (name, fn) => ipcMain.handle(`spotify:${name}`, async (event, ...args) => {
+    if (event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== page) throw new Error('Spotify is available only in the desktop window.');
+    try { return { value: await fn(...args) }; }
+    catch (error) { return { error: error.message, status: error.status ?? 0, retryAt: error.retryAt ?? 0 }; }
+  });
+  handleSpotify('status', () => spotify.snapshot());
+  handleSpotify('connect', (id) => spotify.connect(id));
+  handleSpotify('cancel', () => spotify.cancelLogin?.());
+  handleSpotify('disconnect', () => { capture?.stop(); return spotify.disconnect(); });
+  handleSpotify('refresh', () => spotify.refreshLibrary(true));
+  handleSpotify('album-tracks', (id, offset, snapshot) => spotify.albumTracks(id, offset, snapshot));
+  handleSpotify('transition', (active) => spotify.transition(!!active));
+  handleSpotify('tracks', (id, offset) => spotify.tracks(id, offset));
+  handleSpotify('devices', () => spotify.devices());
+  handleSpotify('select-device', (id, sameMac) => spotify.selectDevice(id, sameMac));
+  handleSpotify('playback', () => spotify.playback());
+  handleSpotify('command', (action, value) => spotify.command(action, value));
+  handleSpotify('external', (url) => spotify.external(url));
+  capture = new SpotifyCapture({ sameMac: () => spotify.config.sameMac && !!spotify.tokens, send: (type, data) => { if (captureOwner && !captureOwner.isDestroyed()) captureOwner.send(`capture:${type}`, data); } });
+  ipcMain.handle('capture:start', (event) => {
+    if (event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== page) throw new Error('Capture is available only in Music.');
+    captureOwner = event.sender; return capture.start();
+  });
+  ipcMain.handle('capture:stop', (event) => { if (captureOwner === event.sender) capture.stop(); });
+  ipcMain.on('capture:ack', (event, sequence) => { if (captureOwner === event.sender) capture.ack(sequence); });
   // a frame can't be added to or removed from an open window, so the window is built anew for it
   async function open(bounds, maximized) {
     const desktop = {
@@ -105,8 +142,23 @@ app.whenReady().then(async () => {
     };
     const win = new BrowserWindow({
       frame: st.frame, show: false, backgroundColor: '#000', ...bounds,
-      webPreferences: { preload: path.join(here, 'preload.cjs'), additionalArguments: [`--desktop=${JSON.stringify(desktop)}`] },
+      webPreferences: { backgroundThrottling: false, preload: path.join(here, 'preload.bundle.cjs'), additionalArguments: [`--desktop=${JSON.stringify(desktop)}`] },
     });
+    const contents = win.webContents;
+    if (process.env.MUSIC_DIAGNOSTICS === '1') {
+      contents.on('console-message', event => { if (event.message?.startsWith('[music-metrics]') || event.level === 'error') console.log(event.message, event.sourceId, event.lineNumber); });
+      contents.once('did-finish-load', () => void contents.executeJavaScript(`(() => {
+        let frames = 0, previous = performance.now(), maxFrame = 0, last = previous;
+        const tick = now => { frames++; maxFrame = Math.max(maxFrame, now - previous); previous = now;
+          if (now - last >= 10000) { console.log('[music-metrics] ' + JSON.stringify({ fps: frames * 1000 / (now - last), maxFrame, heapMB: performance.memory?.usedJSHeapSize / 1e6, nodes: document.querySelectorAll('*').length })); frames = 0; maxFrame = 0; last = now; }
+          requestAnimationFrame(tick);
+        }; requestAnimationFrame(tick);
+      })()`));
+    }
+    contents.on('destroyed', () => { if (captureOwner === contents) capture.stop(); });
+    win.webContents.on('did-start-navigation', () => { if (captureOwner === win.webContents) capture.stop(); });
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.on('will-navigate', (event, url) => { if (url !== page) event.preventDefault(); });
     win.webContents.on('before-input-event', (e, input) => { // Ctrl+Q quits, also without window chrome (Cmd+Q on macOS comes from the app menu)
       if (input.control && input.key.toLowerCase() === 'q') { e.preventDefault(); app.quit(); }
     });
@@ -124,7 +176,8 @@ app.whenReady().then(async () => {
   });
   await waitFor(`${local}/rest/ping`);
   await open({}, true);
+  void spotify.refreshLibrary();
 });
 
-app.on('before-quit', () => { app.isQuitting = true; navidrome?.kill(); });
+app.on('before-quit', () => { app.isQuitting = true; capture?.stop(); spotify?.cancelLogin?.(); navidrome?.kill(); });
 app.on('window-all-closed', () => app.quit());

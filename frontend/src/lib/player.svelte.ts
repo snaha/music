@@ -1,167 +1,280 @@
-import type { Child } from 'subsonic-api';
-import { coverUrl, ok, session, streamUrl } from './api.svelte';
-import { moveTo, shuffle } from './shuffle';
+import { session, streamUrl } from './api.svelte';
+import { spotify } from './spotify.svelte';
+import { PlaybackController, type PlaybackAdapter } from './playback-controller';
+import { confirmSpotify, interpretRemote, type RemoteObservation } from './spotify-playback';
+import { shuffle } from './shuffle';
+import type { Track } from './music';
 
-export const player = $state({
-  queue: [] as Child[], index: -1, playing: false, time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, topHidden: false, visOpen: false, view: '' as '' | 'share' | 'settings', viewFrom: 'bottom' as 'bottom' | 'right',
-  get song() { return this.queue[this.index] as Child | undefined; },
-});
-
-const audio = new Audio();
-audio.crossOrigin = 'anonymous'; // needed later for Web Audio / visualizers
-audio.preload = 'auto';
-let scrobbled = false;
-
-audio.addEventListener('timeupdate', () => {
-  player.time = audio.currentTime;
-  player.duration = audio.duration || player.song?.duration || 0;
-  // Subsonic servers never count a stream as a play; report once past 50% or 4 min
-  if (!scrobbled && player.song && (player.time > player.duration / 2 || player.time > 240)) {
-    scrobbled = true;
-    session.api?.scrobble({ id: player.song.id, submission: true }).catch(() => {});
-  }
-});
-audio.addEventListener('play', () => { player.playing = true; navigator.mediaSession && (navigator.mediaSession.playbackState = 'playing'); });
-audio.addEventListener('pause', () => { player.playing = false; navigator.mediaSession && (navigator.mediaSession.playbackState = 'paused'); });
-audio.addEventListener('ended', next);
-
-// VLC's model: the playlist stays put and only the order through it changes.
-// normal and shuffle: the playlist is the album (the queue, in track order); shuffle walks it through a shuffled index.
-// random: the playlist is every song the grid shows, walked through a shuffled index of song numbers (see Grid);
-// the queue is then the history of songs played this cycle, queue[i] being the song at position i of the index.
-// Next and prev move the cursor; at the end of an album playback stops, random starts a new cycle
 export type Order = 'normal' | 'shuffle' | 'random';
-// the songs the grid shows, numbered 0..count-1 across its tiles; `key` changes when the grid's contents do
-export type Grid = { count: number; key: string; find(albumId: string): number; song(n: number): Promise<Child | undefined> };
+export type Grid = { count: number; key: string; find(albumId: string): number; song(n: number): Promise<Track | undefined> };
+export const player = $state({
+  queue: [] as Track[], index: -1, playing: false, pending: false, requesting: false, requestRevision: 0, suspended: false, error: '',
+  time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, topHidden: false, visOpen: false,
+  view: '' as '' | 'share' | 'settings', viewFrom: 'bottom' as 'bottom' | 'right',
+  get song() { return this.queue[this.index] as Track | undefined; },
+});
 
-let perm = new Uint32Array(0), cursor = -1, gridKey = '';
-let grid: (() => Grid) | undefined;
+const audio = new Audio(), warmAudio = new Audio();
+audio.crossOrigin = warmAudio.crossOrigin = 'anonymous';
+audio.preload = 'auto'; warmAudio.preload = 'metadata';
+let localTrack: Track | undefined, scrobbled = false;
+let intent = 0, perm: Uint32Array = new Uint32Array(0), cursor = -1;
+let randomGrid: Grid | undefined, randomDraw = 0;
+let lastRemote: RemoteObservation | undefined;
+let remoteSampleAt = 0, remoteProgress = 0;
+let pollTimer: ReturnType<typeof setTimeout> | undefined, polling = false;
+let queueVersion = 0;
 
-function start(i: number) { player.index = i; load(); }
+function clearWarm() { warmAudio.removeAttribute('src'); warmAudio.load(); }
+function requireMixedOutput() {
+  if (player.queue.some((s) => s.source === 'spotify') && player.queue.some((s) => s.source === 'local') && !spotify.sameMac)
+    throw new Error('Mixed queues need Spotify Desktop on this Mac. Choose and confirm it in Settings.');
+}
+const localAdapter: PlaybackAdapter = {
+  available(track) { requireMixedOutput(); if (!session.api || !track.available) throw new Error('Local track unavailable. Check your music library.'); },
+  async prepare(track) { graph?.ctx.resume(); if (audio.src !== streamUrl(track.rawId)) { audio.src = streamUrl(track.rawId); audio.load(); } },
+  async start(track) { localTrack = track; scrobbled = false; audio.currentTime = 0; await audio.play(); session.api?.scrobble({ id: track.rawId, submission: false }).catch(() => {}); },
+  async pause() { audio.pause(); },
+  async resume() { graph?.ctx.resume(); await audio.play(); },
+  async seek(seconds) { audio.currentTime = seconds; },
+};
+const remoteAdapter: PlaybackAdapter = {
+  available(track) {
+    requireMixedOutput();
+    if (!window.spotify || !spotify.connected) throw new Error('Connect Spotify in Settings.');
+    if (!track.available) throw new Error('This Spotify track is unavailable. Skip it to continue.');
+    if (!spotify.deviceId) throw new Error('Select Spotify Desktop in Settings.');
+  },
+  async prepare() { await graph?.ctx.resume(); },
+  async start(track) {
+    await window.spotify!.command('play', track.uri);
+    const state = await confirmSpotify((s) => !!s && s.deviceId === spotify.deviceId && s.track?.id === track.id && s.playing);
+    if (state) rememberRemote(track, state.progress, true);
+  },
+  async pause() {
+    const before = await window.spotify!.playback();
+    if (!before) throw new Error('Cannot confirm Spotify has stopped. Open Spotify Desktop, play and pause a track there, then retry here.');
+    if (before.deviceId !== spotify.deviceId) throw new Error('Spotify output changed outside Music. Select the output again.');
+    if (!before.playing) return;
+    await window.spotify!.command('pause');
+    await confirmSpotify((s) => !!s && s.deviceId === spotify.deviceId && !s.playing);
+  },
+  async resume() {
+    await window.spotify!.command('resume');
+    const state = await confirmSpotify((s) => !!s && s.deviceId === spotify.deviceId && s.track?.id === player.song?.id && s.playing);
+    if (state && player.song) rememberRemote(player.song, state.progress, true);
+  },
+  async seek(seconds) { await window.spotify!.command('seek', seconds); remoteProgress = seconds; remoteSampleAt = performance.now(); lastRemote = undefined; },
+};
+const controller = new PlaybackController({ local: localAdapter, spotify: remoteAdapter });
 
-// an album (or playlist) chosen by hand: from `index`, or from its start, which in shuffle is a random track
-export function play(queue: Child[], index = -1) {
-  if (player.order === 'random') {
-    const s = queue[Math.max(0, index)]; if (!s) return;
-    // VLC's select: it becomes the next position of the index, so the cycle goes on around it
-    const g = grid?.(), n = g && s.albumId ? g.find(s.albumId) : -1;
-    if (g?.key === gridKey && n >= 0) moveTo(perm, n + Math.max(0, index), cursor + 1);
-    player.queue = [...player.queue.slice(0, cursor + 1), s]; cursor++;
-    return start(cursor);
-  }
-  player.queue = queue;
-  if (player.order === 'shuffle') { perm = shuffle(queue.length, index); cursor = 0; return start(perm[0]); }
-  start(Math.max(0, index));
+function playing(value: boolean) {
+  player.playing = value;
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = value ? 'playing' : 'paused';
+}
+function fail(error: unknown) { player.error = error instanceof Error ? error.message : String(error); player.pending = false; player.suspended = true; playing(false); }
+function metadata(track: Track) {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({ title: track.title, artist: track.artist, album: track.album,
+    artwork: track.cover ? [{ src: track.cover, sizes: '512x512' }] : [] });
+}
+function rememberRemote(track: Track, progress: number, isPlaying: boolean) {
+  remoteProgress = progress; remoteSampleAt = performance.now();
+  lastRemote = { trackId: track.id, progress, duration: track.duration ?? 0, at: Date.now(), playing: isPlaying };
+}
+function prepareNext() {
+  const i = player.order === 'shuffle' ? perm[cursor + 1] : player.index + 1;
+  const track = player.queue[i];
+  if (track?.source === 'local') warmAudio.src = streamUrl(track.rawId);
+  else clearWarm();
+}
+async function start(index: number) {
+  const track = player.queue[index]; if (!track) return;
+  const mine = ++intent;
+  player.index = index; player.pending = true; player.suspended = false; player.error = '';
+  player.time = 0; player.duration = track.duration ?? 0; playing(false); lastRemote = undefined;
+  const startedAt = performance.now();
+  void window.spotify?.transition?.(true).catch(() => {});
+  try {
+    await controller.play(track);
+    if (mine !== intent) return;
+    player.pending = false; playing(true); metadata(track); prepareNext(); schedulePoll(1000);
+    performance.measure('music-playback-handoff', { start: startedAt, end: performance.now(), detail: { source: track.source } });
+  } catch (error) { if (mine === intent) fail(error); }
+  finally { if (mine === intent) void window.spotify?.transition?.(false).catch(() => {}); }
 }
 
-// the current song always plays on; only what comes after it changes
-export async function setOrder(order: Order, source: () => Grid) {
+function rebuildShuffle() {
+  if (player.order === 'shuffle') { perm = shuffle(player.queue.length, player.index); cursor = 0; }
+}
+export function play(queue: Track[], index = 0) {
+  player.requestRevision++;
+  queueVersion++;
+  randomDraw++; randomGrid = undefined;
+  player.queue = queue.map((t) => ({ ...t })); player.index = Math.max(0, index);
+  if (player.order === 'random') player.order = 'normal';
+  rebuildShuffle();
+  if (player.queue.length) void start(player.order === 'shuffle' ? perm[0] : player.index);
+  return queueVersion;
+}
+export function appendToSession(tracks: Track[], version: number) {
+  if (version !== queueVersion) return false;
+  const offset = player.queue.length;
+  player.queue.push(...tracks.map((t) => ({ ...t })));
+  if (player.order === 'shuffle') perm = Uint32Array.from([...perm, ...Array.from(shuffle(tracks.length), (i) => i + offset)]);
+  prepareNext(); return true;
+}
+export function enqueue(tracks: Track[]) {
+  if (player.order === 'random') { randomGrid = undefined; randomDraw++; player.order = 'normal'; }
+  appendToSession(tracks, queueVersion); player.queueOpen = true;
+  return queueVersion;
+}
+export function moveQueue(from: number, to: number) {
+  if (from < 0 || to < 0 || from >= player.queue.length || to >= player.queue.length) return;
+  const current = player.song;
+  const [entry] = player.queue.splice(from, 1); player.queue.splice(to, 0, entry);
+  player.index = current ? player.queue.indexOf(current) : -1;
+  rebuildShuffle(); prepareNext();
+}
+export function removeQueue(index: number) {
+  if (index < 0 || index >= player.queue.length) return;
+  const current = player.song;
+  const removingCurrent = index === player.index;
+  player.queue.splice(index, 1);
+  if (!removingCurrent) player.index = current ? player.queue.indexOf(current) : -1;
+  else if (player.queue.length) void start(Math.min(index, player.queue.length - 1));
+  else { queueVersion++; player.index = -1; void pause(); }
+  rebuildShuffle(); prepareNext();
+}
+
+export function setOrder(order: Order, source: () => Grid) {
   if (order === player.order) return;
-  const was = player.order, cur = player.song;
-  player.order = order; grid = source;
+  player.order = order; randomDraw++;
   if (order === 'random') {
-    gridKey = ''; // the index is built on the first draw
-    player.queue = cur ? [cur] : []; cursor = player.index = player.queue.length - 1;
-    if (!cur) next();
-    return;
-  }
-  // leaving random: the playlist becomes the current song's album again
-  if (was === 'random' && cur?.albumId) {
-    const album = ok(await session.api!.getAlbum({ id: cur.albumId })).album.song ?? [];
-    if (player.order !== order || player.song?.id !== cur.id) return; // changed again meanwhile
-    player.queue = album; player.index = Math.max(0, album.findIndex((s) => s.id === cur.id));
-  }
-  if (order === 'shuffle') { perm = shuffle(player.queue.length, player.index); cursor = 0; }
+    randomGrid = source(); // freeze the source selection for this listening session
+    perm = shuffle(randomGrid.count); cursor = -1;
+    const current = player.song;
+    player.queue = current ? [current] : []; player.index = current ? 0 : -1;
+    if (!current) void nextRandom();
+  } else { randomGrid = undefined; rebuildShuffle(); }
 }
-
 async function nextRandom() {
-  if (cursor < player.queue.length - 1) return start(++cursor); // forward again through the history after prev
-  const g = grid?.();
-  if (!g?.count) return;
-  const cur = player.song;
-  if (g.key !== gridKey || cursor >= perm.length - 1) {
-    // a new index when the grid changed or the cycle is done; a finished cycle keeps its last song at position 0
-    // so the new one never opens with it. A changed grid numbers its songs anew, so the current one is not placed
-    perm = shuffle(g.count, g.key === gridKey && cursor >= 0 ? perm[cursor] : -1); gridKey = g.key;
-    player.queue = cur ? [cur] : []; cursor = player.queue.length - 1; player.index = cursor;
-  }
-  if (cursor + 1 >= perm.length) return; // a single song on the grid
-  const s = await g.song(perm[cursor + 1]);
-  if (!s) return audio.pause();
-  player.queue.push(s); cursor++;
-  start(cursor);
+  const grid = randomGrid; if (!grid?.count) return;
+  if (player.index < player.queue.length - 1) { void start(player.index + 1); return; }
+  if (++cursor >= perm.length) { perm = shuffle(grid.count); cursor = 0; }
+  const mine = ++randomDraw; player.requesting = true;
+  try {
+    const track = await grid.song(perm[cursor]);
+    if (mine !== randomDraw) return;
+    if (!track) throw new Error('This collection has no playable music tracks. Skip to continue.');
+    player.queue.push({ ...track }); void start(player.queue.length - 1);
+  } catch (error) { if (mine === randomDraw) fail(error); }
+  finally { if (mine === randomDraw) player.requesting = false; }
 }
-
-function load() {
-  const s = player.song;
-  if (!s) return;
-  scrobbled = false;
-  graph?.ctx.resume(); // a graph made without a gesture (viz background at start) is suspended, and would mute the element
-  audio.src = streamUrl(s.id);
-  audio.play().catch(() => {});
-  session.api?.scrobble({ id: s.id, submission: false }).catch(() => {});
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: s.title, artist: s.artist, album: s.album,
-      artwork: [{ src: coverUrl(s.coverArt, 512), sizes: '512x512' }],
-    });
-  }
+export function jumpRandom(source: () => Grid) {
+  const hadSong = !!player.song;
+  if (player.order !== 'random') { setOrder('random', source); if (hadSong) void nextRandom(); }
+  else void nextRandom();
 }
-
-// Web Audio graph for visualizers, created lazily on first use (a user gesture) so plain playback
-// never depends on it. crossOrigin on the element + Navidrome's wildcard CORS keep it from going silent.
-let graph: { ctx: AudioContext; node: GainNode } | null = null;
-export function audioGraph() {
-  if (!graph) {
-    const ctx = new AudioContext();
-    const node = ctx.createGain(); // element -> gain -> output; the gain is the tap point (and later ReplayGain)
-    ctx.createMediaElementSource(audio).connect(node);
-    node.connect(ctx.destination);
-    graph = { ctx, node };
-  }
-  graph.ctx.resume();
-  return graph;
+export function jump(index: number) {
+  player.requestRevision++;
+  randomDraw++;
+  if (player.order === 'shuffle') { player.index = index; rebuildShuffle(); }
+  void start(index);
 }
-
-// the Shuffle key: in order, a random other track of the album; shuffle and random, the next song of their index.
-// With nothing left in the album it draws a song from the grid and plays its album from there
-export async function jumpRandom(source: () => Grid) {
-  grid = source;
-  const others = player.queue.map((_, i) => i).filter((i) => i !== player.index);
-  if (player.order === 'random') return nextRandom();
-  if (player.order === 'normal' && others.length) return start(others[Math.floor(Math.random() * others.length)]);
-  if (player.order === 'shuffle' && cursor < perm.length - 1) return start(perm[++cursor]);
-  const g = source(), s = g.count ? await g.song(Math.floor(Math.random() * g.count)) : undefined;
-  if (!s?.albumId) return;
-  const album = ok(await session.api!.getAlbum({ id: s.albumId })).album.song ?? [];
-  play(album, Math.max(0, album.findIndex((x) => x.id === s.id)));
-}
-
-// a song picked from the list: in shuffle it takes the next position of the index, like VLC's select
-export function jump(i: number) {
-  if (i < 0 || i >= player.queue.length) return;
-  if (player.order === 'random') cursor = i;
-  if (player.order === 'shuffle') { moveTo(perm, i, cursor + 1); cursor++; }
-  start(i);
-}
-export function toggle() { audio.paused ? audio.play().catch(() => {}) : audio.pause(); }
 export function next() {
+  player.requestRevision++;
   if (player.order === 'random') return void nextRandom();
-  if (player.order === 'shuffle') { if (cursor < perm.length - 1) start(perm[++cursor]); return; }
-  if (player.index < player.queue.length - 1) start(player.index + 1);
+  const index = player.order === 'shuffle' ? perm[cursor + 1] : player.index + 1;
+  if (index < player.queue.length) { if (player.order === 'shuffle') cursor++; void start(index); }
+  else { void pause(); player.time = player.duration; }
 }
 export function prev() {
-  const back = player.order === 'normal' ? player.index > 0 : cursor > 0;
-  if (audio.currentTime > 3 || !back) { audio.currentTime = 0; return; }
-  if (player.order === 'normal') start(player.index - 1);
-  else if (player.order === 'shuffle') start(perm[--cursor]);
-  else start(--cursor);
+  player.requestRevision++;
+  if (player.time > 3) return seek(0);
+  if (player.order === 'shuffle') { if (cursor > 0) void start(perm[--cursor]); }
+  else if (player.index > 0) void start(player.index - 1);
 }
-export function seek(fraction: number) { if (player.duration) audio.currentTime = fraction * player.duration; }
+export async function pause() {
+  player.requestRevision++;
+  lastRemote = undefined;
+  const mine = ++intent; randomDraw++; player.requesting = false; player.pending = true;
+  try { await controller.pause(); if (mine === intent) { playing(false); player.pending = false; } }
+  catch (error) { if (mine === intent) fail(error); }
+}
+export async function toggle() {
+  if (player.playing || player.pending) return pause();
+  if (!player.song && player.queue.length) return start(0);
+  if (!player.song) return;
+  if (player.suspended || controller.current?.id !== player.song.id || player.time >= player.duration - 0.2) return start(player.index);
+  const mine = ++intent; player.pending = true;
+  try { await controller.resume(); if (mine === intent) { player.pending = false; player.error = ''; playing(true); schedulePoll(1000); } }
+  catch (error) { if (mine === intent) fail(error); }
+}
+export async function seek(fraction: number) {
+  if (!player.duration || player.pending || !Number.isFinite(fraction)) return;
+  const seconds = Math.max(0, Math.min(1, fraction)) * player.duration;
+  player.time = seconds;
+  const mine = ++intent;
+  lastRemote = undefined;
+  try { await controller.seek(seconds); } catch (error) { if (mine === intent) fail(error); }
+}
 
+audio.addEventListener('timeupdate', () => {
+  if (controller.active !== 'local' || player.pending || player.song?.id !== localTrack?.id) return;
+  player.time = audio.currentTime; player.duration = audio.duration || localTrack?.duration || 0;
+  if (!scrobbled && localTrack && (player.time > player.duration / 2 || player.time > 240)) {
+    scrobbled = true; session.api?.scrobble({ id: localTrack.rawId, submission: true }).catch(() => {});
+  }
+});
+audio.addEventListener('ended', () => { if (controller.active === 'local' && !player.pending) next(); });
+audio.addEventListener('error', () => { if (controller.active === 'local') fail(new Error('Local audio could not be loaded. Check the file and retry or skip.')); });
+audio.addEventListener('pause', () => { if (controller.active === 'local' && !player.pending) playing(false); });
+audio.addEventListener('play', () => { if (controller.active === 'local' && !player.pending) playing(true); });
+
+function schedulePoll(ms: number) { clearTimeout(pollTimer); pollTimer = setTimeout(pollRemote, ms); }
+async function pollRemote() {
+  if (polling || controller.active !== 'spotify' || player.pending || player.suspended || !player.song) { schedulePoll(2000); return; }
+  polling = true; const track = player.song, mine = intent;
+  try {
+    const state = await window.spotify!.playback();
+    if (mine !== intent || player.song !== track) return;
+    const result = interpretRemote(state, track, spotify.deviceId, lastRemote);
+    if (result === 'external') {
+      controller.suspend(); fail(new Error('Playback changed in Spotify. Your queue is paused here; press Play to take control again.')); return;
+    }
+    if (result === 'unavailable') { fail(new Error('Spotify Desktop is unavailable. Open it, play and pause a track there, then press Play here.')); return; }
+    if (result === 'ended') { lastRemote = undefined; next(); return; }
+    rememberRemote(track, state!.progress, state!.playing); player.time = state!.progress; playing(state!.playing);
+  } catch (error) { if (mine === intent) fail(error); }
+  finally {
+    polling = false;
+    const remaining = player.duration - player.time;
+    schedulePoll(player.playing ? (remaining < 5 ? 750 : document.hidden ? 5000 : 2500) : 10000);
+  }
+}
+// Smooth progress without a network request on every frame.
+const progressTimer = setInterval(() => {
+  if (controller.active === 'spotify' && player.playing && !player.pending)
+    player.time = Math.min(player.duration, remoteProgress + (performance.now() - remoteSampleAt) / 1000);
+}, 100);
+export function disposePlayback() { clearInterval(progressTimer); clearTimeout(pollTimer); audio.pause(); clearWarm(); }
+
+let graph: { ctx: AudioContext; node: GainNode; localAnalysis: GainNode } | null = null;
+export function audioGraph() {
+  if (!graph) {
+    const ctx = new AudioContext(), node = ctx.createGain();
+    const local = ctx.createMediaElementSource(audio), silent = ctx.createGain(), localAnalysis = ctx.createGain();
+    local.connect(ctx.destination); local.connect(localAnalysis); localAnalysis.connect(node);
+    silent.gain.value = 0; node.connect(silent); silent.connect(ctx.destination);
+    graph = { ctx, node, localAnalysis };
+  }
+  graph.ctx.resume(); return graph;
+}
 if ('mediaSession' in navigator) {
   const ms = navigator.mediaSession;
-  ms.setActionHandler('play', toggle); ms.setActionHandler('pause', toggle);
+  ms.setActionHandler('play', () => { if (!player.playing) void toggle(); });
+  ms.setActionHandler('pause', () => void pause());
   ms.setActionHandler('nexttrack', next); ms.setActionHandler('previoustrack', prev);
-  ms.setActionHandler('seekto', (d) => { if (d.seekTime != null) audio.currentTime = d.seekTime; });
+  ms.setActionHandler('seekto', (d) => { if (d.seekTime != null) void seek(d.seekTime / player.duration); });
 }

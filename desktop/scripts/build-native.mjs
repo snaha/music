@@ -1,0 +1,12 @@
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
+import os from 'node:os';
+if (process.platform !== 'darwin') process.exit(0);
+const root = path.resolve(import.meta.dirname, '..');
+const cache = path.join(os.homedir(), 'Library/Caches/node-gyp');
+const candidates = [process.env.NODE_INCLUDE_DIR, path.resolve(process.execPath, '../../include/node'), '/opt/homebrew/include/node', '/usr/local/include/node', ...(existsSync(cache) ? readdirSync(cache).map(v => path.join(cache, v, 'include/node')) : [])];
+const headers = candidates.find(p => p && existsSync(path.join(p, 'node_api.h')));
+if (!headers) throw new Error('Install Node development headers or set NODE_INCLUDE_DIR to the folder containing node_api.h.');
+mkdirSync(path.join(root, 'native/build'), { recursive: true });
+execFileSync('xcrun', ['clang++', '-std=c++17', '-fobjc-arc', '-mmacosx-version-min=14.2', '-shared', '-undefined', 'dynamic_lookup', '-DNAPI_VERSION=8', '-I', headers, '-framework', 'Foundation', '-framework', 'CoreAudio', path.join(root, 'native/spotify-tap.mm'), '-o', path.join(root, 'native/build/spotify-tap.node')], { stdio: 'inherit' });

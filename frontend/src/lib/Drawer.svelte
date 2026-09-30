@@ -23,6 +23,7 @@
     display: flex; flex-direction: column; background: rgba(0, 0, 0, 0.85); color: #eee; z-index: 1;
   }
   /* right variant: the bottom layout rotated — chevron on the right edge, centred, pointing right */
+  .panel:not(.right) { top: var(--browsebar, 0px); }
   .panel.right { inset: var(--topbar, 0px) var(--sidebar, 0px) var(--botbar, 0px) 0; padding: 0; flex-direction: row-reverse; }
   .handle {
     all: unset; cursor: pointer; align-self: stretch; display: flex; align-items: center; justify-content: center;

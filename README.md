@@ -128,3 +128,6 @@ the new code.
 
 See [desktop/README.md](desktop/README.md) for the desktop app and [frontend/README.md](frontend/README.md)
 for the web frontend.
+
+The experimental connected player combines local music with Spotify library browsing and remote playback.
+See [Connected music setup](desktop/CONNECTED-MUSIC.md) for account setup, mixed queues and prototype limitations.

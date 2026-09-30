@@ -1,24 +1,29 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { restore, session } from './lib/api.svelte';
-  import { library, MODES, pick, setMode, watchScan } from './lib/library.svelte';
+  import { library, MODES, pick, setMode, watchScan, updateSpotifyCollections } from './lib/library.svelte';
   import { next, player, prev, toggle } from './lib/player.svelte';
   import Bar from './lib/Bar.svelte';
   import Login from './lib/Login.svelte';
   import Grid from './lib/Grid.svelte';
   import Visualizer from './lib/Visualizer.svelte';
+  import { initSpotify, spotify } from './lib/spotify.svelte';
 
   let ready = $state(false), idle = $state(false), hint = $state(false);
   let idleTimer: ReturnType<typeof setTimeout>;
 
-  onMount(() => { restore().finally(() => (ready = true)); watchScan(); });
-  $effect(() => { if (session.api) setMode('albums'); });
+  onMount(() => { restore().finally(() => (ready = true)); return watchScan(); });
+  onMount(initSpotify);
+  $effect(() => { if (session.api) untrack(() => setMode('albums')); });
+  $effect(() => { spotify.collections; spotify.albums; spotify.connected; untrack(updateSpotifyCollections); });
 
   // any pointer activity (mouse move, tap, touch scroll) shows the bars; they fade again after a pause
   function wake() { idle = false; player.topHidden = false; clearTimeout(idleTimer); idleTimer = setTimeout(() => (idle = true), 2500); }
 
   function onkeydown(e: KeyboardEvent) {
-    if ((e.target as HTMLElement).tagName === 'INPUT' || player.visOpen) return; // the visualizer owns the keys while open
+    const target = e.target as HTMLElement;
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName) || target.getAttribute('role') === 'slider' || player.visOpen) return;
+    if (target.tagName === 'BUTTON' && e.key !== 'Escape') return;
     const n = Number(e.key);
     if (n >= 1 && n <= MODES.length) setMode(MODES[n - 1]);
     else if (e.key === ' ') { e.preventDefault(); toggle(); }

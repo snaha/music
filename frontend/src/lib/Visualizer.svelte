@@ -1,11 +1,16 @@
 <script lang="ts">
+  import { capture, enableCapture, setCaptureActive } from './spotify-visualizer.svelte';
+  import { spotify } from './spotify.svelte';
   import { onMount } from 'svelte';
-  import { audioGraph, player } from './player.svelte';
+  import { audioGraph, player, next as nextTrack, prev as previousTrack } from './player.svelte';
 
   // background: behind the grid instead of fullscreen; no keys, no click to close, and half resolution so the
   // grid keeps scrolling at full rate on top of it
   let { background = false }: { background?: boolean } = $props();
   let canvas: HTMLCanvasElement;
+  const captureOwner = Symbol('visualizer');
+  const source = $derived(player.song?.source);
+  $effect(() => { audioGraph().localAnalysis.gain.value = source === 'spotify' ? 0 : 1; void setCaptureActive(captureOwner, capture.enabled && source === 'spotify' && spotify.sameMac && spotify.connected); return () => { void setCaptureActive(captureOwner, false); }; });
   let host: HTMLDivElement;
   let error = $state('');
   let name = $state('');       // preset name, shown briefly after a key press (not on automatic changes)
@@ -33,7 +38,9 @@
   // Milkdrop keys: Space next (blend), H hard cut, Backspace previous, R toggle cycling, Scroll Lock lock, T song title
   function onkeydown(e: KeyboardEvent) {
     if (background) return;
-    if (e.key === ' ') next(2.7, true);
+    if (e.key === 'ArrowRight') nextTrack();
+    else if (e.key === 'ArrowLeft') previousTrack();
+    else if (e.key === ' ') next(2.7, true);
     else if (e.key === 'h' || e.key === 'H') next(0, true);
     else if (e.key === 'Backspace') prev();
     else if (e.key === 'r' || e.key === 'R') setCycling(!cycling);
@@ -46,13 +53,14 @@
 
   onMount(() => {
     if (!document.createElement('canvas').getContext('webgl2')) { error = 'WebGL2 is not available in this browser'; return; }
-    let raf = 0;
+    let raf = 0, disposed = false;
     const { ctx, node } = audioGraph();
-    const dpr = background ? 0.5 : devicePixelRatio || 1;
+    const dpr = Math.min(background ? 0.5 : devicePixelRatio || 1, 1920 / innerWidth);
     const size = () => { canvas.width = innerWidth * dpr; canvas.height = innerHeight * dpr; vis?.setRendererSize(innerWidth * dpr, innerHeight * dpr); };
     size();
     // engine and presets are loaded only when the visualizer opens; they are heavy
     Promise.all([import('butterchurn'), import('butterchurn-presets')]).then(([bc, pk]) => {
+      if (disposed) return;
       presets = pk.default.getPresets(); names = Object.keys(presets);
       // the 2.4.7 preset pack is precompiled JS, so onlyUseWASM would reject every preset
       vis = bc.default.createVisualizer(ctx, canvas, {
@@ -69,7 +77,7 @@
     const onfs = () => { if (!background && !document.fullscreenElement) player.visOpen = false; };
     document.addEventListener('fullscreenchange', onfs);
     return () => {
-      cancelAnimationFrame(raf); clearInterval(cycleTimer); clearTimeout(nameTimer); ro.disconnect();
+      disposed = true; cancelAnimationFrame(raf); clearInterval(cycleTimer); clearTimeout(nameTimer); ro.disconnect();
       document.removeEventListener('fullscreenchange', onfs);
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       vis?.disconnectAudio(node); // butterchurn has no destroy(); dropping the refs is the cleanup
@@ -82,10 +90,20 @@
 <div class="vis" class:bg={background} bind:this={host} onclick={() => { if (!background) player.visOpen = false; }} role="presentation">
   <canvas bind:this={canvas}></canvas>
   {#if name}<span class="name">{name}{#if !cycling} · locked{/if}</span>{/if}
+  {#if player.song?.source === 'spotify'}
+    <div class="capture" onclick={event => event.stopPropagation()} role="presentation">
+      {#if !capture.enabled}<button onclick={() => enableCapture(true)}>Enable Spotify visualization</button><small>Uses Spotify audio on this Mac. No recording or microphone.</small>
+      {:else if !spotify.sameMac}<small>Select Spotify Desktop on this Mac in Settings.</small>
+      {:else if capture.message}<small>{capture.message}</small>{/if}
+      {#if capture.enabled}<button onclick={() => enableCapture(false)}>Turn capture off</button>{/if}
+    </div>
+  {/if}
   {#if error}<p>{error}</p>{/if}
 </div>
 
 <style>
+  .capture { position: absolute; top: 20px; left: 20px; display: flex; gap: 12px; align-items: center; color: #ccc; cursor: auto; pointer-events: auto; background: #111b; padding: 10px; border-radius: 6px; }
+  .capture button { color: #fff; background: #333; border: 1px solid #777; padding: 8px 12px; cursor: pointer; }
   .vis { position: fixed; inset: 0; background: #000; z-index: 3; cursor: none; }
   .vis.bg { z-index: -1; cursor: auto; pointer-events: none; }
   canvas { width: 100%; height: 100%; display: block; }
