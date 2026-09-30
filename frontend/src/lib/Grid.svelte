@@ -21,7 +21,8 @@
   let motion = $state(localStorage.getItem('motion') === '1'); // off by default
   // which set of controls the top bar shows
   const SETS = { layout: 'Layout', look: 'Look', search: 'Search', sources: 'Sources' } as const;
-  let set = $state((localStorage.getItem('set') as keyof typeof SETS) || 'layout');
+  const savedSet = localStorage.getItem('set');
+  let set = $state<keyof typeof SETS>(savedSet && savedSet in SETS ? savedSet as keyof typeof SETS : 'layout');
   library.source = window.spotify ? (['all', 'local', 'spotify'].includes(localStorage.getItem('library.source') ?? '') ? localStorage.getItem('library.source') as typeof library.source : 'all') : 'all';
   library.highlight = localStorage.getItem('library.highlight') === '1';
   $effect(() => {
@@ -105,18 +106,19 @@
   let panelOpen = $derived(leftOpen || rightOpen);
   // never fade while the pointer rests on the chrome (touch has no resting pointer, only a stale one), or while a panel is open;
   // on touch idling never hides it, scrolling does
-  let barShown = $derived(!!rightView || overChrome || panelOpen || !((!touch && hidden) || player.queueOpen || (!touch && player.topHidden)));
+  let controlsFocused = $state(false);
+  let barShown = $derived(displayControls || controlsFocused || !!rightView || overChrome || panelOpen || !((!touch && hidden) || player.queueOpen || (!touch && player.topHidden)));
   // published sizes so a drawer can fill exactly the space between top bar, side panel and player bar.
   // on touch the panel never takes space: the drawer spans the full width and the panel opens over it
-  let barHeight = $state(0), sideWidth = $state(0);
+  let barHeight = $state(0);
   $effect(() => { document.documentElement.style.setProperty('--topbar', `${filterHeight + (displayControls ? barHeight : 0)}px`); });
   $effect(() => { document.documentElement.style.setProperty('--browsebar', `${filterHeight}px`); });
-  $effect(() => { document.documentElement.style.setProperty('--sidebar', `${displayControls && rightOpen && !touch ? sideWidth : 0}px`); });
+  $effect(() => { document.documentElement.style.setProperty('--sidebar', '0px'); });
   let lit = $derived(overChrome || panelOpen);
   // a menu item opens its view beside the panel, or closes it when it is the one showing. With a mouse the menu stays open;
   // on touch it closes so the view gets the whole width
   function open(view: 'share' | 'settings') { player.viewFrom = 'right'; player.view = rightView === view ? '' : view; rightMenu = !touch; }
-  let chrome = $derived(lit ? 1 : near);
+  let chrome = $derived(displayControls || lit || controlsFocused ? 1 : near);
   function onmove(e: PointerEvent) {
     drift.target = motion ? { x: (e.clientX / innerWidth) * 2 - 1, y: (e.clientY / innerHeight) * 2 - 1 } : { x: 0, y: 0 };
     if (!touch) near = Math.min(1, Math.max(0, 1 - e.clientY / (innerHeight / 2)));
@@ -159,7 +161,7 @@
     </label>
     {#if library.mode === 'albums'}<label class="favorite-filter"><input type="checkbox" bind:checked={favoritesOnly} onchange={filterChanged} /> Local favorites</label>{/if}
     <button class="browse-reset" onclick={resetFilters}>Reset filters</button>
-    <button aria-pressed={displayControls} onclick={() => (displayControls = !displayControls)}>Display</button>
+    <button class="display-toggle" aria-expanded={displayControls} aria-controls="display-controls" aria-pressed={displayControls} onclick={() => (displayControls = !displayControls)}>Display</button>
     <button onclick={() => { player.viewFrom = 'right'; player.view = player.view === 'settings' ? '' : 'settings'; rightMenu = false; }}>Settings</button>
   </div>
   <div class="browse-summary">
@@ -213,22 +215,23 @@
   </div>
 {/if}
 
-<div class="controls" role="toolbar" tabindex="-1" aria-label="Controls" inert={!displayControls || !barShown} class:hidden={!displayControls || !barShown} style:top="{filterHeight}px" class:lit style:--chrome={chrome} style:pointer-events={displayControls && barShown && chrome > 0.05 ? 'auto' : 'none'}
+<div id="display-controls" class="controls" role="region" tabindex="-1" aria-label="Display options" inert={!displayControls || !barShown} class:hidden={!displayControls || !barShown} style:top="{filterHeight}px" class:lit style:--chrome={chrome} style:pointer-events={displayControls && barShown && chrome > 0.05 ? 'auto' : 'none'}
+  onfocusin={() => (controlsFocused = true)} onfocusout={(e) => { if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) controlsFocused = false; }}
   bind:clientHeight={barHeight} onpointerenter={() => (overChrome = !touch)} onpointerleave={() => (overChrome = false)}>
   {#if set === 'sources'}
     <span class="group" role="radiogroup" aria-label="Music sources">
       {#each (window.spotify ? ['all', 'local', 'spotify'] : ['all', 'local']) as source}
-        <button class="opt" class:on={library.source === source} role="radio" aria-checked={library.source === source} onclick={() => (library.source = source as typeof library.source)}>{source}</button>
+        <button class="opt" class:on={library.source === source} role="radio" aria-checked={library.source === source} onclick={() => (library.source = source as typeof library.source)}>{source === 'all' ? 'All' : source === 'local' ? 'Local' : 'Spotify'}</button>
       {/each}
     </span>
-    <label><input type="checkbox" bind:checked={library.highlight} /> highlight sources</label>
+    <label><input type="checkbox" bind:checked={library.highlight} /> Highlight sources</label>
   {:else if set === 'layout'}
-    <label>columns <input type="range" min="1" max="10" bind:value={cols} /> {cols}</label>
-    <label>gap <input type="range" min="0" max="160" bind:value={gap} /> {gap}</label>
+    <label class="slider-control"><span>Columns</span><input type="range" min="1" max="10" bind:value={cols} /><output>{cols}</output></label>
+    <label class="slider-control"><span>Gap</span><input type="range" min="0" max="160" bind:value={gap} /><output>{gap}</output></label>
   {:else if set === 'search'}
     <span class="find">
-      <input type="text" placeholder="search" bind:value={query} spellcheck="false" autocomplete="off" aria-label="Search"
-        onkeydown={(e) => { if (e.key === 'Escape') query = ''; }} {@attach (el) => el.focus()} />
+      <input type="text" placeholder="Search library…" bind:value={query} spellcheck="false" autocomplete="off" aria-label="Search"
+        onkeydown={(e) => { if (e.key === 'Escape') query = ''; }} />
       {#if query}
         <button class="clear" onclick={() => (query = '')} aria-label="Clear search">
           <svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
@@ -237,22 +240,22 @@
     </span>
   {:else}
     <span class="group" role="radiogroup" aria-label="Background">
-      <span class="name">background</span>
+      <span class="name">Background</span>
       {#each Object.entries(MATERIALS) as [key, label] (key)}
         <button class="opt" class:on={bg.material === key} role="radio" aria-checked={bg.material === key} disabled={key === 'custom' && !bg.custom}
           title={key === 'custom' && !bg.custom ? 'import one in settings' : undefined} onclick={() => (bg.material = key as keyof typeof MATERIALS)}>{label}</button>
       {/each}
-      <button class="opt" onclick={randomBackground} title="one of the bundled sample backgrounds">random</button>
+      <button class="opt" onclick={randomBackground} title="one of the bundled sample backgrounds">Random</button>
     </span>
   {/if}
   <!-- left corner: which part of the library the grid shows -->
-  <Side side="left" label={library.mode} {touch} bind:menu={leftMenu} bind:open={leftOpen}>
+  <Side side="left" label={modeLabels[library.mode]} {touch} bind:menu={leftMenu} bind:open={leftOpen}>
     {#each MODES as m (m)}
-      <button role="menuitem" tabindex={leftOpen ? 0 : -1} class:on={library.mode === m} onclick={() => { changeMode(m); leftMenu = false; }}>{m}</button>
+      <button role="menuitem" tabindex={leftOpen ? 0 : -1} class:on={library.mode === m} onclick={() => { changeMode(m); leftMenu = false; }}>{modeLabels[m]}</button>
     {/each}
   </Side>
   <!-- right corner: which set of controls the bar shows, and the share and settings views -->
-  <Side side="right" label={SETS[set]} {touch} pinned={!!rightView && !touch} onunpin={() => (player.view = '')} bind:menu={rightMenu} bind:open={rightOpen} bind:width={sideWidth}>
+  <Side side="right" label={SETS[set]} {touch} pinned={!!rightView && !touch} onunpin={() => (player.view = '')} bind:menu={rightMenu} bind:open={rightOpen}>
     {#each Object.entries(SETS) as [key, label] (key)}
       <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={set === key} onclick={() => { set = key as keyof typeof SETS; player.view = ''; rightMenu = false; }}>{label}</button>
     {/each}
@@ -378,57 +381,47 @@
   .tile:hover i { opacity: .7; }
   .tile.active { box-shadow: 0 0 0 2px #fff, 0 0 50px #fff5; }
   .controls {
-    /* sizes scale with the viewport between phone and desktop */
-    --s: clamp(0.5px, 100vw / 1600, 1px);
-    /* one fixed height for every control set so switching never jumps; --bar-rows scales it (2, 3 …) later */
-    --bar-rows: 1;
-    position: fixed; top: 0; left: 0; right: 0; box-sizing: border-box; min-height: calc(96 * var(--s) * var(--bar-rows));
-    display: flex; flex-wrap: wrap; justify-content: center; align-items: center; align-content: center;
-    gap: calc(12 * var(--s)) calc(36 * var(--s));
-    color: #fff; font-size: calc(24 * var(--s));
-    padding: calc(8 * var(--s)) calc(20 * var(--s)); background: rgba(0, 0, 0, 0.6);
-    letter-spacing: .08em; text-transform: uppercase; opacity: var(--chrome, 1); user-select: none;
-    transition: opacity 150ms, background 200ms; z-index: 2;
+    --s: 1px;
+    position: fixed; left: 0; right: 0; box-sizing: border-box; min-height: 88px;
+    display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 16px 28px;
+    padding: 16px 180px; color: #eee; background: #19191cf5;
+    font: 13px/1.4 system-ui, sans-serif; user-select: none; z-index: 2;
+    opacity: var(--chrome, 1);
+    transition: opacity 180ms ease-out;
   }
-  .controls.lit { background: rgba(0, 0, 0, 0.78); } /* a bit darker while hovered or a panel is open */
-  @media (hover: none), (pointer: coarse) { .controls { transition: opacity 450ms, background 200ms; } }
   .controls.hidden { opacity: 0; pointer-events: none; }
+  .controls :is(button, input):focus-visible { outline: 2px solid #c4b5fd; outline-offset: 4px; }
+  .browse .display-toggle[aria-expanded=true] { background: #c4b5fd; border-color: #c4b5fd; color: #19151f; }
   /* scan progress while navidrome indexes the folder (first run, new files) */
   .scan { position: fixed; left: 50%; bottom: 130px; transform: translateX(-50%); padding: 8px 16px; border-radius: 4px;
     background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 14px; letter-spacing: .12em; text-transform: uppercase; pointer-events: none; z-index: 2; }
-  .controls label { display: flex; align-items: center; gap: calc(16 * var(--s)); }
-  /* look set: a row of labelled options */
-  .group { display: flex; align-items: center; gap: calc(10 * var(--s)); }
-  .name { margin-right: calc(8 * var(--s)); opacity: .7; }
-  .controls .opt { all: unset; cursor: pointer; padding: calc(4 * var(--s)) calc(12 * var(--s)); border: 1px solid #fff5; border-radius: 3px; opacity: .6; }
-  .controls .opt:hover { opacity: 1; }
-  .controls .opt:disabled { opacity: .25; cursor: default; }
-  .controls .opt.on { opacity: 1; background: #fff; color: #000; border-color: #fff; }
-  /* search set: bare underlined field with a white caret; the clear key appears once there is text */
-  .find { position: relative; display: flex; align-items: center; }
-  .controls input[type=text] {
-    width: calc(420 * var(--s)); height: auto; padding: calc(6 * var(--s)) calc(36 * var(--s)) calc(6 * var(--s)) 0;
-    border: 0; border-bottom: 1px solid #fff6; border-radius: 0; background: none; color: #fff; caret-color: #fff;
-    font: inherit; letter-spacing: inherit; text-transform: none; outline: none; cursor: text; transition: border-color 150ms;
-  }
-  .controls input[type=text]:focus { border-bottom-color: #fff; }
-  .controls input[type=text]::placeholder { color: #fff6; text-transform: uppercase; }
-  .controls .clear { all: unset; cursor: pointer; position: absolute; right: 0; display: flex; padding: calc(6 * var(--s)); opacity: .6; }
-  .controls .clear:hover { opacity: 1; }
-  /* same thin slider in every browser; Firefox's default range is large */
-  .controls input { appearance: none; width: calc(240 * var(--s)); height: calc(32 * var(--s)); margin: 0; background: none; cursor: pointer; }
-  .controls input::-webkit-slider-runnable-track { height: 4px; background: #fff6; }
-  .controls input::-moz-range-track { height: 4px; background: #fff6; }
-  .controls input::-webkit-slider-thumb { appearance: none; width: calc(24 * var(--s)); height: calc(24 * var(--s));
-    margin-top: calc(2px - 12 * var(--s)); border-radius: 50%; background: #fff; }
-  .controls input::-moz-range-thumb { width: calc(24 * var(--s)); height: calc(24 * var(--s)); border: 0; border-radius: 50%; background: #fff; }
-  /* phones: the first row holds just the two corner keys, the controls sit in rows below. Every row is one bar unit
-     (96): each control is --h tall with the rest of the unit between rows, so controls that don't fit add a whole unit */
+  .controls label { display: flex; align-items: center; gap: 12px; }
+  .slider-control { flex: 1 1 220px; max-width: 340px; }
+  .slider-control > span { width: 56px; color: #c8c8ce; }
+  .slider-control output { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
+  .group { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; }
+  .name { margin-right: 10px; color: #c8c8ce; }
+  .controls .opt { font: inherit; cursor: pointer; padding: 9px 12px; min-height: 40px; color: #c8c8ce; background: transparent; border: 0; border-radius: 6px; transition: color 140ms, background 140ms; }
+  .controls .opt:hover { background: #ffffff10; color: #fff; }
+  .controls .opt:disabled { color: #787880; cursor: default; background: transparent; }
+  .controls .opt.on { background: #c4b5fd; color: #19151f; }
+  .find { position: relative; display: flex; align-items: center; width: min(100%, 420px); }
+  .controls input[type=text] { box-sizing: border-box; width: 100%; min-height: 40px; padding: 8px 40px 8px 12px; border: 1px solid #ffffff26; border-radius: 6px; background: #ffffff08; color: #eee; caret-color: #c4b5fd; font: inherit; }
+  .controls input[type=text]::placeholder { color: #aaaab3; }
+  .controls .clear { cursor: pointer; position: absolute; right: 0; display: grid; place-items: center; width: 40px; height: 40px; background: transparent; border: 0; border-radius: 6px; color: #c8c8ce; }
+  .controls .clear:hover { color: #fff; background: #ffffff10; }
+  .controls input[type=checkbox] { width: 18px; height: 18px; accent-color: #c4b5fd; cursor: pointer; }
+  .controls input[type=range] { appearance: none; flex: 1; min-width: 60px; width: 140px; height: 40px; margin: 0; background: transparent; cursor: pointer; accent-color: #c4b5fd; }
+  .controls input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: #686871; }
+  .controls input[type=range]::-moz-range-track { height: 3px; border-radius: 2px; background: #686871; }
+  .controls input[type=range]::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; margin-top: -6.5px; border-radius: 50%; background: #c4b5fd; transition: background 140ms; }
+  .controls input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #c4b5fd; }
+  @media (max-width: 1100px) { .controls { padding: 72px 24px 16px; } }
   @media (max-width: 700px) {
-    .controls { --h: calc(44 * var(--s)); --row-gap: calc(96 * var(--s) - var(--h));
-      padding: calc(96 * var(--s) + var(--row-gap) / 2) calc(20 * var(--s)) calc(var(--row-gap) / 2); row-gap: var(--row-gap); }
-    .controls label, .find, .group > * { height: var(--h); box-sizing: border-box; }
-    .group { flex-wrap: wrap; justify-content: center; row-gap: var(--row-gap); }
-    .controls .opt { display: flex; align-items: center; height: var(--h); box-sizing: border-box; } /* its all: unset drops the rule above */
+    .controls { padding: 68px 16px 16px; gap: 8px; }
+    .slider-control { flex-basis: 100%; max-width: none; }
+    .controls .opt { min-height: 44px; }
+    .name { flex-basis: 100%; margin: 0; text-align: center; }
   }
+  @media (prefers-reduced-motion: reduce) { .controls, .controls .opt, .controls input[type=range]::-webkit-slider-thumb { transition: none; } }
 </style>
