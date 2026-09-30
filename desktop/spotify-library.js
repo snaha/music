@@ -42,7 +42,7 @@ export function deriveAlbums(cache) {
     const included = [...album.tracks.values()].sort((a, b) => (a.disc ?? 1) - (b.disc ?? 1) || (a.track ?? 0) - (b.track ?? 0) || a.id.localeCompare(b.id));
     tracks.set(id, included);
     const { tracks: ignored, origins, ...tile } = album;
-    values.set(id, { ...tile, count: included.length, available: included.some(t => t.available), origins: [...origins], saved: catalog.get(id)?.kind === 'album' });
+    values.set(id, { ...tile, count: included.length, available: included.some(t => t.available), origins: [...origins], saved: catalog.get(id)?.kind === 'album', incomplete: [...origins].some(origin => !index.sources[origin]) });
   }
   for (const id of Object.keys(index.firstSeen)) if (!values.has(id)) delete index.firstSeen[id];
   const known = new Set(index.albumOrder);

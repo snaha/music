@@ -38,3 +38,32 @@ control and feel good using it.
   A background refresh replaces content in place, it never resets the view.
 - Anything ongoing shows its state (indexing, loading) at a lively rate, not a sluggish one.
 - Hold 60 fps through transitions and scrolling; measure on a phone, not just the desktop.
+
+## UI Regression Testing
+
+- Use the agent-driven workflow in `frontend/tests/agent/README.md`. Follow
+  `frontend/tests/agent/AUDIT-PROMPT.md` for a full visual audit and
+  `frontend/UX-AUDIT.md` for the repeatable Mac-app checklist.
+- Prefer Codex browser/computer controls or `agent-browser` for UI testing.
+  Do not introduce Playwright or Cypress test frameworks unless requested.
+- When UI testing is requested, start the isolated synthetic library with
+  `pnpm --dir frontend audit:serve`, then run
+  `pnpm --dir frontend audit:regressions` when `agent-browser` is available.
+  Use its documented browser setup or `AGENT_BROWSER_EXECUTABLE_PATH`.
+- Cover 1920×1080, 1440×900, 1024×768 and 390×844. Check card hover and keyboard
+  focus, default play and track actions, searchable dropdowns, filters, both
+  library views, Settings, Display menus, Simple/Advanced sliders and all
+  component styles. Verify scrolling and background updates preserve tile
+  order, scroll position and the queue.
+- Save screenshots and pass/fail/blocked results in `.audit-results/`.
+  Passing interaction assertions or capturing screenshots does not establish
+  a visual pass: inspect the images and compare with approved references.
+  Never approve changed references automatically to hide a regression.
+- Use synthetic data for repeatable browser checks. Validate the actual
+  repository-local Mac app separately, preserving accounts, permissions,
+  preferences and playback. Report physical-touch, performance, live Spotify
+  and audio-capture checks as untested unless actually exercised.
+- For requested validation, also run `pnpm --dir frontend check`,
+  `pnpm --dir desktop test` and `pnpm --dir desktop build:frontend` as applicable.
+  Stop temporary servers, close audit-created browser sessions and reset
+  viewport overrides afterward.

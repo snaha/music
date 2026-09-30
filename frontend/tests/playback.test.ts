@@ -48,7 +48,7 @@ test('a failed outgoing pause cannot start the next source', async () => {
 });
 
 test('unavailable tracks retain the current source and external release stops ownership', async () => {
-  const { controller } = setup(); await controller.play(track('local'));
+  const { controller, sounding } = setup(); await controller.play(track('local'));
   await assert.rejects(controller.play({ ...track('spotify'), available: false }), /Unavailable/);
-  assert.equal(controller.active, 'local'); controller.release(); assert.equal(controller.active, undefined);
+  assert.equal(controller.active, 'local'); assert.ok(sounding.has('local'), 'blocked handoff leaves current audio playing'); controller.release(); assert.equal(controller.active, undefined);
 });

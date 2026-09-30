@@ -10,6 +10,7 @@ const call = async (name, ...args) => {
 };
 contextBridge.exposeInMainWorld('spotify', {
   status: () => call('status'), connect: (id) => call('connect', id), cancel: () => call('cancel'),
+  checkAvailability: (force) => call('check-availability', force), removeLibrary: () => call('remove-library'),
   disconnect: () => call('disconnect'), refresh: () => call('refresh'),
   albumTracks: (id, offset, snapshot) => call('album-tracks', id, offset, snapshot), transition: (active) => call('transition', active),
   tracks: (id, offset) => call('tracks', id, offset), devices: () => call('devices'),

@@ -1,8 +1,16 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import Icon from './ui/icon.svelte';
+  import { reveal } from './ui/motion';
+  import Button from './ui/button.svelte';
+  import Slider from './ui/slider.svelte';
+  import './ui-style.svelte';
+  import LibrarySelect from './ui/library-select.svelte';
+  import ComponentStyles from './ComponentStyles.svelte';
+  import noiseBackground from './noise-background.svg';
   import { Spring } from 'svelte/motion';
   import { addCollection, library, MODES, setMode, type Mode, type Tile } from './library.svelte';
-  import { spotify } from './spotify.svelte';
+  import { spotify, spotifyPlayable, spotifyDimmed, spotifyMessage, spotifyRecoveryLabel, checkSpotify } from './spotify.svelte';
   import { player } from './player.svelte';
   import { session } from './api.svelte';
   import Side from './Side.svelte';
@@ -16,6 +24,8 @@
   // Tile styling from Figma "Frame 2" (3312px wide): 48px gaps, 16px radius, shadows. Sizes are in design
   // units (--u = 100vw / 3312) so they scale with the window; the grid itself is full width.
   let cols = $state(Number(localStorage.getItem('grid.cols')) || 3);
+  let advancedLayout = $state(false);
+  function resizeGrid(value: number) { cols = 11 - value; gap = Math.round(24 + cols * 8); }
   let gap = $state(Number(localStorage.getItem('grid.gap') ?? 48));
   let art = $state(localStorage.getItem('art') !== '0');
   let motion = $state(localStorage.getItem('motion') === '1'); // off by default
@@ -37,6 +47,18 @@
   let favoritesOnly = $state(false);
   let details = $state<Tile | null>(null);
   let displayControls = $state(false);
+  let filtersOpen = $state(false);
+  let discoveryId = $state('');
+  const activeFilters = $derived(Number(library.source !== 'all') + Number(!!artistFilter) + Number(sort !== 'library') + Number(favoritesOnly));
+  function discover() {
+    const candidates = shown.filter(t => t.id !== discoveryId);
+    if (!candidates.length) return;
+    const tile = candidates[Math.floor(Math.random() * candidates.length)];
+    discoveryId = tile.id;
+    const index = shown.findIndex(t => t.id === tile.id);
+    autoScroll = true;
+    scroller?.scrollTo({ top: Math.floor(index / effectiveCols) * rowStep, behavior: 'instant' });
+  }
   let filterHeight = $state(110);
   $effect(() => { const mode = library.mode; untrack(() => { artistFilter = ''; if (mode === 'playlists' && sort === 'recent') sort = 'library'; }); });
   const modeLabels: Record<Mode, string> = { albums: 'Albums', playlists: 'Playlists' };
@@ -71,13 +93,16 @@
   function resetFilters() { query = ''; artistFilter = ''; library.source = 'all'; sort = 'library'; favoritesOnly = false; art = false; filterChanged(); }
   $effect(() => { library.visible = shown; });
 
+  let barHeight = $state(0);
   let viewportWidth = $state(innerWidth), viewportHeight = $state(innerHeight), scrollTop = $state(0);
   const pixelGap = $derived(Math.max(0.2, gap * (viewportWidth + (innerWidth - viewportWidth)) / 3312));
-  const rowStep = $derived(Math.max(1, (viewportWidth - pixelGap * (cols + 1)) / cols + pixelGap));
-  const totalRows = $derived(Math.ceil(shown.length / cols));
-  const firstRow = $derived(Math.max(0, Math.min(totalRows, Math.floor((scrollTop - filterHeight - pixelGap) / rowStep) - 2)));
-  const lastRow = $derived(Math.min(totalRows, Math.ceil((scrollTop - filterHeight + viewportHeight) / rowStep) + 3));
-  const visibleTiles = $derived(shown.slice(firstRow * cols, lastRow * cols));
+  const effectiveCols = $derived(Math.min(cols, Math.max(1, Math.floor(viewportWidth / 140))));
+  const gridInset = $derived(filterHeight + (displayControls ? barHeight : 0));
+  const rowStep = $derived(Math.max(1, (viewportWidth - pixelGap * (effectiveCols + 1)) / effectiveCols + pixelGap));
+  const totalRows = $derived(Math.ceil(shown.length / effectiveCols));
+  const firstRow = $derived(Math.max(0, Math.min(totalRows, Math.floor((scrollTop - gridInset - pixelGap) / rowStep) - 2)));
+  const lastRow = $derived(Math.min(totalRows, Math.ceil((scrollTop - gridInset + viewportHeight) / rowStep) + 3));
+  const visibleTiles = $derived(shown.slice(firstRow * effectiveCols, lastRow * effectiveCols));
 
   // when the playing album changes (random queue, next track), bring its cover into view
   // that scroll is not the user's: on touch it must not show or hide the top bar, so it is ignored until the next touch
@@ -110,14 +135,13 @@
   let barShown = $derived(displayControls || controlsFocused || !!rightView || overChrome || panelOpen || !((!touch && hidden) || player.queueOpen || (!touch && player.topHidden)));
   // published sizes so a drawer can fill exactly the space between top bar, side panel and player bar.
   // on touch the panel never takes space: the drawer spans the full width and the panel opens over it
-  let barHeight = $state(0);
   $effect(() => { document.documentElement.style.setProperty('--topbar', `${filterHeight + (displayControls ? barHeight : 0)}px`); });
   $effect(() => { document.documentElement.style.setProperty('--browsebar', `${filterHeight}px`); });
   $effect(() => { document.documentElement.style.setProperty('--sidebar', '0px'); });
   let lit = $derived(overChrome || panelOpen);
   // a menu item opens its view beside the panel, or closes it when it is the one showing. With a mouse the menu stays open;
   // on touch it closes so the view gets the whole width
-  function open(view: 'share' | 'settings') { player.viewFrom = 'right'; player.view = rightView === view ? '' : view; rightMenu = !touch; }
+  function open(view: 'share' | 'settings' | 'components') { player.viewFrom = 'right'; player.view = rightView === view ? '' : view; rightMenu = false; }
   let chrome = $derived(displayControls || lit || controlsFocused ? 1 : near);
   function onmove(e: PointerEvent) {
     drift.target = motion ? { x: (e.clientX / innerWidth) * 2 - 1, y: (e.clientY / innerHeight) * 2 - 1 } : { x: 0, y: 0 };
@@ -136,41 +160,48 @@
     <div class="view-tabs" role="tablist" aria-label="Library views">
       {#each MODES as mode}<button role="tab" aria-selected={library.mode === mode} onclick={() => changeMode(mode)}>{modeLabels[mode]}</button>{/each}
     </div>
-    <label class="browse-search">Search
+    <label class="browse-search"><span class="filter-caption">Search</span>
       <input type="search" aria-label="Search library" placeholder="Album, artist or playlist…" bind:value={query} oninput={filterChanged} onkeydown={(e) => { if (e.key === 'Escape') { query = ''; filterChanged(); } }} autocomplete="off" spellcheck="false" />
     </label>
-    <label>Source
-      <select aria-label="Filter by source" bind:value={library.source} onchange={changeSource}>
-        <option value="all">All sources</option><option value="local">Local</option>
-        {#if window.spotify}<option value="spotify">Spotify</option>{/if}
-      </select>
+    <button class="discovery-action" onclick={discover} disabled={!shown.length} title="Find an album in this view"><Icon name="shuffle" /> <span>Surprise me</span></button>
+    <button class="filter-toggle" aria-label="Library filters" aria-expanded={filtersOpen} aria-controls="browse-filters" onclick={() => (filtersOpen = !filtersOpen)}><Icon name="filter" /><span>Filters{activeFilters ? ` · ${activeFilters}` : ''}</span></button>
+    <div class="view-actions" role="group" aria-label="View and settings">
+      <Button variant="ghost" size="sm" aria-pressed={displayControls} aria-label="Show display controls" title="Display controls" onclick={() => (displayControls = !displayControls)}><Icon name="display" /></Button>
+      <Button variant="ghost" size="sm" aria-label="Settings" aria-pressed={player.view === 'settings'} title="Settings" onclick={() => { player.viewFrom = 'right'; player.view = player.view === 'settings' ? '' : 'settings'; rightMenu = false; }}><Icon name="settings" /></Button>
+
+    </div>
+  </div>
+  {#if filtersOpen}<div id="browse-filters" class="filter-tray" aria-label="Refine library" inert={!filtersOpen} in:reveal={{ y: -8 }} out:reveal={{ y: -4, duration: 110 }}>
+    <label class="compact-filter"><span class="filter-caption">Source</span>
+      <LibrarySelect label="Filter by source" bind:value={library.source} onchange={changeSource} options={[{ value: 'all', label: 'All sources' }, { value: 'local', label: 'Local' }, ...(window.spotify ? [{ value: 'spotify', label: 'Spotify' }] : [])]} />
     </label>
     {#if library.mode === 'albums'}
-      <label>Artist
-        <select aria-label="Filter by artist" bind:value={artistFilter} onchange={filterChanged}>
-          <option value="">All artists</option>
-          {#if artistFilter && !artists.includes(artistFilter)}<option value={artistFilter}>{artistFilter}</option>{/if}
-          {#each artists as name}<option value={name}>{name}</option>{/each}
-        </select>
+      <label class="compact-filter"><span class="filter-caption">Artist</span>
+        <LibrarySelect label="Filter by artist" bind:value={artistFilter} onchange={filterChanged} options={[{ value: '', label: 'All artists' }, ...[...new Set([...(artistFilter ? [artistFilter] : []), ...artists])].map(name => ({ value: name, label: name }))]} />
       </label>
     {/if}
-    <label>Sort
-      <select aria-label="Sort library" bind:value={sort} onchange={filterChanged}>
-        <option value="library">Library order</option>{#if library.mode === 'albums'}<option value="recent">Recently added</option>{/if}<option value="title">Title A–Z</option><option value="artist">Artist A–Z</option>
-      </select>
+    <label class="compact-filter"><span class="filter-caption">Sort</span>
+      <LibrarySelect label="Sort library" bind:value={sort} onchange={filterChanged} options={[{ value: 'library', label: 'Library order' }, ...(library.mode === 'albums' ? [{ value: 'recent', label: 'Recently added' }] : []), { value: 'title', label: 'Title A–Z' }, { value: 'artist', label: 'Artist A–Z' }]} />
     </label>
-    {#if library.mode === 'albums'}<label class="favorite-filter"><input type="checkbox" bind:checked={favoritesOnly} onchange={filterChanged} /> Local favorites</label>{/if}
-    <button class="browse-reset" onclick={resetFilters}>Reset filters</button>
-    <button class="display-toggle" aria-expanded={displayControls} aria-controls="display-controls" aria-pressed={displayControls} onclick={() => (displayControls = !displayControls)}>Display</button>
-    <button onclick={() => { player.viewFrom = 'right'; player.view = player.view === 'settings' ? '' : 'settings'; rightMenu = false; }}>Settings</button>
-  </div>
-  <div class="browse-summary">
-    <span role="status">{shown.length} of {sourceTiles.length} {library.mode === 'playlists' ? 'playlists' : 'albums'}{#if library.loading} · Loading…{/if}</span>
-    {#if art}<button onclick={() => { art = false; filterChanged(); }}>Covers only ×</button>{/if}
-    {#if window.spotify && spotify.connected}
-      <span class="spotify-count">Spotify: {spotifyAlbumCount} albums · {spotifyPlaylistCount} playlists{#if hasLiked} · Liked Songs{/if} · {spotify.indexedTracks} indexed tracks · {spotify.inaccessiblePlaylists} playlists with inaccessible contents</span>
-    {/if}
-  </div>
+    <div class="filter-actions" role="group" aria-label="Filter actions">
+      {#if library.mode === 'albums'}<Button variant="ghost" size="sm" aria-pressed={favoritesOnly} aria-label="Local favorites" title="Local favorites" onclick={() => { favoritesOnly = !favoritesOnly; filterChanged(); }}><Icon name="star" /></Button>{/if}
+      {#if query || artistFilter || library.source !== 'all' || sort !== 'library' || favoritesOnly || art}<Button variant="ghost" size="sm" aria-label="Reset filters" title="Reset filters" onclick={resetFilters}><Icon name="reset" /></Button>{/if}
+    </div>
+      <div class="library-info">
+        <button class="info-trigger" aria-label="Library details" title="Library details"><Icon name="info" /></button>
+        <div class="library-details" role="status">
+          <p>{shown.length} of {sourceTiles.length} {library.mode === 'playlists' ? 'playlists' : 'albums'}{library.loading ? ' · Loading…' : ''}</p>
+          {#if art}<button onclick={() => { art = false; filterChanged(); }}>Show albums without artwork</button>{/if}
+          {#if window.spotify && spotify.connected}<p>Spotify: {spotifyAlbumCount} albums · {spotifyPlaylistCount} playlists{hasLiked ? ' · Liked Songs' : ''}</p><p>{spotify.indexedTracks} indexed tracks · {spotify.inaccessiblePlaylists} playlists with inaccessible contents</p>{/if}
+        </div>
+      </div>
+  </div>{/if}
+  {#if window.spotify && !spotifyPlayable()}
+    <div class="spotify-availability" role="status">
+      <span title={spotifyMessage()}>{spotifyMessage()}</span>
+      <button style:visibility={spotifyPlayable() ? 'hidden' : 'visible'} disabled={spotifyPlayable()} onclick={() => spotify.availability === 'offline' || spotify.availability === 'checking' ? checkSpotify(true) : open('settings')}>{spotifyRecoveryLabel()}</button>
+    </div>
+  {/if}
 </div>
 
 <!-- an image dropped anywhere becomes the custom background -->
@@ -181,18 +212,19 @@
 {#if bg.material === 'viz' && !player.visOpen}<Visualizer background />{/if}
 
 <!-- the material sits on the cards' layer so it scrolls and drifts with them, or on the fixed viewport behind them -->
-<div class="scroll" style:padding-top="{filterHeight}px" class:fill={!bg.tile} class:m-vinyl={!bg.scroll && bg.material === 'vinyl'} class:m-grille={!bg.scroll && bg.material === 'grille'}
-  class:m-fabric={!bg.scroll && bg.material === 'fabric'} class:m-custom={!bg.scroll && bg.material === 'custom'} style:--custom={bg.custom ? `url("${bg.custom}")` : 'none'} {onscroll} bind:this={scroller} bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
+<div class="scroll" style:padding-top="{gridInset}px" class:fill={!bg.tile} class:m-vinyl={!bg.scroll && bg.material === 'vinyl'} class:m-grille={!bg.scroll && bg.material === 'grille'}
+  class:m-fabric={!bg.scroll && bg.material === 'fabric'} class:m-custom={!bg.scroll && (bg.material === 'custom' || bg.material === 'noise')} style:--custom={bg.material === 'noise' ? `url("${noiseBackground}")` : bg.custom ? `url("${bg.custom}")` : 'none'} {onscroll} bind:this={scroller} bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
   <div class="grid" class:m-vinyl={bg.scroll && bg.material === 'vinyl'} class:m-grille={bg.scroll && bg.material === 'grille'}
-    class:m-fabric={bg.scroll && bg.material === 'fabric'} class:m-custom={bg.scroll && bg.material === 'custom'} style:--cols={cols} style:--gap="max(0.2px, calc({gap} * var(--u)))"
+    class:m-fabric={bg.scroll && bg.material === 'fabric'} class:m-custom={bg.scroll && (bg.material === 'custom' || bg.material === 'noise')} style:--cols={effectiveCols} style:--gap="max(0.2px, calc({gap} * var(--u)))"
     style:padding-top="{pixelGap + firstRow * rowStep}px" style:padding-bottom="{140 + (totalRows - lastRow) * rowStep}px"
     style:transform="translate3d({drift.current.x * -8}px, {drift.current.y * -6}px, 0)">
     {#each visibleTiles as t (t.id)}
-      <div class="tile-wrap" class:source-highlight={library.highlight} class:spotify-tile={t.source === 'spotify'}>
-        <button class="tile" disabled={!t.available} class:active={t.id === activeId} onclick={() => pick(t)} aria-label="Play {t.title} — {t.sub} — {t.source}">
+      <div class="tile-wrap" class:source-highlight={library.highlight} class:spotify-tile={t.source === 'spotify'} class:discovered={t.id === discoveryId}>
+        <button class="tile" class:unavailable-art={t.source === 'spotify' && (spotifyDimmed() || !t.available)} class:active={t.id === activeId} onclick={() => { if (t.source === 'spotify' && (!spotifyPlayable() || !t.available)) details = t; else pick(t); }} aria-label="{t.source === 'spotify' && (!spotifyPlayable() || !t.available) ? 'Show saved tracks' : 'Play'} {t.title} — {t.sub} — {t.source}">
           {#if t.cover}<img src={t.cover} alt={t.title} loading="lazy" draggable="false" />{:else}<span class="fallback">{t.title}</span>{/if}
           {#if t.source === 'local'}<i></i>{/if}
         </button>
+        {#if t.source === 'spotify' && (!spotifyPlayable() || !t.available)}<span class="availability-badge" title={!t.available ? 'Spotify tracks are not accessible in Music' : spotifyMessage()}>{!t.available ? 'Tracks unavailable' : ''}{#if t.available}{spotify.availability === 'device-unavailable' ? 'Choose output' : spotify.availability === 'checking' ? 'Checking' : spotify.availability === 'restricted' ? 'Access restricted' : spotify.availability === 'offline' ? 'Offline' : spotify.availability === 'reconnect' ? 'Reconnect' : 'Disconnected'}{/if}</span>{/if}
         <div class="tile-info">
           <span class="tile-title">{t.title}<small>{t.sub}</small><small>{t.indexing ? 'Indexing…' : `${t.count} included track${t.count === 1 ? '' : 's'}`}</small></span>
           <span class="tile-actions">
@@ -200,7 +232,7 @@
               <button class="source-link" onclick={() => window.spotify!.external(t.externalUrl!).catch((e) => (player.error = e.message))} aria-label="Open {t.title} in Spotify">Spotify ↗</button>
             {:else if library.highlight}<span class="source-link">Local</span>{/if}
             <button class="details" onclick={() => { details = t; player.queueOpen = false; player.view = ''; }} aria-label="Show tracks in {t.title}" title="Included tracks">☷</button>
-            <button class="add" onclick={() => addCollection(t)} disabled={!t.available} aria-label="Add {t.title} to queue" title={t.indexing ? 'Album discovery in progress' : t.available ? 'Add to queue' : 'Spotify does not expose these tracks'}>+</button>
+            <button class="add" onclick={() => addCollection(t)} disabled={!t.available} aria-label="Add {t.title} to queue{t.source === 'spotify' && !spotifyPlayable() ? ' · Spotify required' : ''}" title={t.indexing ? 'Album discovery in progress' : t.available ? (t.source === 'spotify' && !spotifyPlayable() ? 'Add to queue · Spotify required' : 'Add to queue') : 'Spotify does not expose these tracks'}>+</button>
           </span>
         </div>
       </div>
@@ -226,8 +258,13 @@
     </span>
     <label><input type="checkbox" bind:checked={library.highlight} /> Highlight sources</label>
   {:else if set === 'layout'}
-    <label class="slider-control"><span>Columns</span><input type="range" min="1" max="10" bind:value={cols} /><output>{cols}</output></label>
-    <label class="slider-control"><span>Gap</span><input type="range" min="0" max="160" bind:value={gap} /><output>{gap}</output></label>
+    {#if advancedLayout}
+      <label class="slider-control"><span>Columns</span> <Slider type="single" min={1} max={10} step={1} value={cols} onValueChange={(value) => (cols = value)} aria-label="Album columns" /> <output>{cols}</output></label>
+      <label class="slider-control"><span>Gap</span> <Slider type="single" min={0} max={160} step={1} value={gap} onValueChange={(value) => (gap = value)} aria-label="Album spacing" /> <output>{gap}</output></label>
+    {:else}
+      <label class="grid-size"><span>Grid size</span> <span class="grid-size-track"><Slider type="single" min={1} max={10} step={1} value={11 - cols} onValueChange={resizeGrid} aria-label="Grid size" /></span><span>{effectiveCols} across</span></label>
+    {/if}
+    <Button variant="outline" size="sm" aria-pressed={advancedLayout} onclick={() => (advancedLayout = !advancedLayout)}>{advancedLayout ? 'Simple' : 'Advanced'}</Button>
   {:else if set === 'search'}
     <span class="find">
       <input type="text" placeholder="Search library…" bind:value={query} spellcheck="false" autocomplete="off" aria-label="Search"
@@ -255,10 +292,11 @@
     {/each}
   </Side>
   <!-- right corner: which set of controls the bar shows, and the share and settings views -->
-  <Side side="right" label={SETS[set]} {touch} pinned={!!rightView && !touch} onunpin={() => (player.view = '')} bind:menu={rightMenu} bind:open={rightOpen}>
+  <Side side="right" label={SETS[set]} {touch} pinned={false} onunpin={() => (player.view = '')} bind:menu={rightMenu} bind:open={rightOpen}>
     {#each Object.entries(SETS) as [key, label] (key)}
       <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={set === key} onclick={() => { set = key as keyof typeof SETS; player.view = ''; rightMenu = false; }}>{label}</button>
     {/each}
+    <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={rightView === 'components'} onclick={() => open('components')}>Components</button>
     <span class="rule"></span>
     {#if session.admin}
       <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={rightView === 'share'} onclick={() => open('share')}>Share</button>
@@ -274,45 +312,94 @@
 {#if details}<CollectionDetails tile={details} onclose={() => (details = null)} />{/if}
 {#if library.error}<div class="library-status" role="alert">{library.error}</div>{/if}
 
+{#if player.view === 'components'}<ComponentStyles onclose={() => (player.view = '')} />{/if}
 {#if player.view === 'settings'}<Settings bind:art bind:motion onclose={() => (player.view = '')} />{/if}
 
 <style>
+  .spotify-availability { display: flex; align-items: center; gap: 8px; height: 48px; font-size: 12px; }
+  .spotify-availability > span { flex: 1; min-width: 0; max-height: 34px; overflow: hidden; }
+  .spotify-availability > button { flex: 0 0 150px; }
+  .tile.unavailable-art img, .tile.unavailable-art .fallback { opacity: .55; }
+  .tile img, .tile .fallback { transition: opacity 150ms ease; }
+  .availability-badge { position: absolute; top: 8px; left: 8px; z-index: 2; background: #111e; color: white; border-radius: 4px; padding: 4px 7px; font: 12px/1.4 system-ui; pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) { .tile img, .tile .fallback { transition: none; } }
+
   .view-tabs { display: flex; gap: 4px; }
   .view-tabs button[aria-selected=true] { background: #eee; color: #151517; }
-  .browse .favorite-filter { flex-direction: row; align-items: center; align-self: center; }
-  .browse .favorite-filter input { width: 16px; min-height: 16px; }
   .playlist-note { position: fixed; bottom: 110px; left: 16px; max-width: 650px; padding: 8px 12px; background: #111e; color: #bbb; font: 12px/1.5 system-ui; pointer-events: none; }
-  .browse { position: fixed; inset: 0 0 auto; z-index: 3; box-sizing: border-box; padding: 14px 20px 10px; color: #eee; background: #151517f5; border-bottom: 1px solid #ffffff1c; font: 13px/1.4 system-ui, sans-serif; }
-  .browse-row { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+  .browse { position: fixed; inset: 0 0 auto; z-index: 3; box-sizing: border-box; padding: 8px 16px; color: #eee; background: #151517f5; border-bottom: 1px solid #ffffff1c; font: 13px/1.4 system-ui, sans-serif; }
+  .browse-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .browse label { display: flex; flex-direction: column; gap: 4px; color: #aaa; min-width: 0; }
-  .browse input, .browse select, .browse button { font: inherit; color: #eee; background: #26262a; border: 1px solid #ffffff26; border-radius: 7px; padding: 8px 10px; min-height: 36px; box-sizing: border-box; }
-  .browse select { max-width: 210px; cursor: pointer; }
+  .browse input, .browse button { font: inherit; color: #eee; background: #26262a; border: 1px solid #ffffff26; border-radius: 7px; padding: 8px 10px; min-height: 36px; box-sizing: border-box; }
   .browse-search { flex: 1; min-width: 200px !important; max-width: 440px; }
   .browse input { width: 100%; }
   .browse button { cursor: pointer; white-space: nowrap; }
-  .browse button:hover, .browse button[aria-pressed=true] { border-color: #aaa; background: #39393e; }
-  .browse :is(input, select, button):focus-visible { outline: 2px solid #b0d8ff; outline-offset: 2px; }
-  .browse-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 9px; color: #aaa; font-size: 12px; }
-  .browse-summary button { padding: 1px 7px; min-height: 22px; font-size: 11px; }
-  .spotify-count { margin-left: auto; }
+  .browse button:hover { border-color: #aaa; background: #39393e; }
+  .browse :is(input, button):focus-visible { outline: 2px solid #b0d8ff; outline-offset: 2px; }
+  .filter-caption { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .filter-actions, .view-actions { display: flex; align-items: center; gap: 2px; }
+  .view-actions { margin-left: auto; border-left: 1px solid #ffffff26; padding-left: 8px; }
+  .filter-actions :global([data-slot=button]), .view-actions :global([data-slot=button]) { width: 32px; height: 32px; padding: 6px; }
+  .library-info { position: relative; }
+  .browse .info-trigger { border: 0; background: transparent; min-height: 32px; width: 32px; padding: 6px; display: flex; align-items: center; justify-content: center; }
+  .library-details { position: absolute; right: 0; top: calc(100% + 6px); width: min(340px, 80vw); background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: 10px; box-shadow: 0 10px 30px #0008; padding: 12px; opacity: 0; visibility: hidden; pointer-events: none; }
+  .library-info:hover .library-details, .library-info:focus-within .library-details { opacity: 1; visibility: visible; pointer-events: auto; }
+  .library-details::before { content: ''; position: absolute; height: 8px; top: -8px; left: 0; right: 0; }
+  .library-details p { margin: 4px 0; color: #aaa; font-size: 12px; }
+  @media (max-width: 700px) {
+    .browse { padding: 8px 10px; }
+    .browse-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .browse label { min-width: 0; }
+    .browse-search { grid-column: 1 / 3; grid-row: 1; min-width: 0 !important; max-width: none; }
+    .view-tabs { grid-column: 1 / 3; grid-row: 2; }
+    .view-actions { grid-column: 3; grid-row: 2; margin-left: 0; padding-left: 0; border-left: 0; justify-content: flex-end; }
+    .compact-filter { grid-row: 3; }
+    .filter-actions { grid-column: 3; grid-row: 1; justify-content: flex-end; }
+    .filter-actions:empty { display: none; }
+    .browse button { min-height: 36px; }
+  }
+
+  .browse { padding: 14px 20px; background: var(--ui-surface); }
+  .browse-row { justify-content: center; flex-wrap: nowrap; max-width: 980px; margin: auto; padding-right: 96px; padding-left: 96px; }
+  .browse-search { flex: 1; min-width: 180px !important; max-width: 320px; }
+  .view-actions { position: absolute; right: 20px; top: 14px; border: 0; padding: 0; margin: 0; }
+  .filter-toggle, .discovery-action { display: inline-flex; align-items: center; gap: 7px; }
+  .browse .filter-toggle, .browse .discovery-action { background: transparent; border-color: transparent; }
+  .browse .filter-toggle[aria-expanded=true] { background: var(--ui-muted); }
+  .filter-tray { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; padding: 14px 0 2px; }
+  .spotify-availability { max-width: 780px; margin: auto; height: auto; min-height: 36px; padding-top: 8px; }
+  .discovered { outline: 2px solid var(--ui-accent); outline-offset: -2px; }
+  .discovered .tile-info { opacity: 1; }
+  .discovered .tile-actions { pointer-events: auto; }
+  @media (max-width: 1100px) {
+    .browse-row { padding-left: 0; padding-right: 96px; }
+    .discovery-action span { display: none; }
+  }
   @media (max-width: 700px) {
     .browse { padding: 10px 12px; }
-    .browse-row { gap: 8px; }
-    .browse label { flex: 1 1 100px; }
-    .browse-search { order: -1; flex-basis: 100% !important; max-width: none; }
-    .browse select { max-width: 100%; width: 100%; }
-    .browse button { min-height: 40px; }
-    .spotify-count { margin-left: 0; }
+    .browse-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; }
+    .browse-search { flex: 1 1 100%; order: 2; min-width: 0 !important; max-width: none; }
+    .view-tabs { margin-right: auto; }
+    .view-actions { position: static; }
+    .discovery-action, .filter-toggle { padding: 6px !important; }
+    .filter-toggle span { display: none; }
+    .filter-tray { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .filter-actions { justify-content: flex-end; }
+    .compact-filter { grid-row: auto; }
   }
 
   .empty-library { position: fixed; inset: 35% 10% auto; text-align: center; color: #bbb; font-size: 18px; }
   .empty-library button { color: white; background: #222; border: 1px solid #777; border-radius: 4px; padding: 12px 18px; cursor: pointer; }
-  .tile-wrap { position: relative; aspect-ratio: 1; min-width: 0; }
+  .tile-wrap { isolation: isolate; position: relative; aspect-ratio: 1; min-width: 0; }
   .tile-wrap .tile { display: block; width: 100%; height: 100%; }
-  .tile-info { position: absolute; bottom: 0; left: 0; right: 0; display: flex; flex-direction: column; align-items: stretch; gap: 5px; padding: 8px; background: linear-gradient(transparent, #000d); color: white; pointer-events: none; font-size: clamp(11px, 1vw, 16px); }
+  .tile-info { z-index: 2; opacity: 0; transition: opacity 120ms; position: absolute; bottom: 0; left: 0; right: 0; display: flex; flex-direction: column; align-items: stretch; gap: 5px; padding: 8px; background: linear-gradient(transparent, #000d); color: white; pointer-events: none; font-size: clamp(11px, 1vw, 16px); }
   .tile-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px #000; }
   .tile-title small { display: block; opacity: .75; overflow: hidden; text-overflow: ellipsis; }
-  .tile-actions { display: flex; justify-content: flex-end; align-items: center; gap: 6px; pointer-events: auto; }
+  .tile-actions { flex-wrap: wrap; display: flex; justify-content: flex-end; align-items: center; gap: 6px; pointer-events: none; }
+  .tile-wrap:hover .tile-info, .tile-wrap:focus-within .tile-info { opacity: 1; }
+  .tile-wrap:hover .tile-actions, .tile-wrap:focus-within .tile-actions { pointer-events: auto; }
+  @media (hover: none) { .tile-wrap:focus-within .tile-info { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .tile-info { transition: none; } }
   .tile-info button { color: white; border: 1px solid #fff5; border-radius: 4px; background: #111c; cursor: pointer; padding: 5px; }
   .tile-info button:disabled { opacity: .4; cursor: default; }
   .source-link { font-size: 11px; white-space: nowrap; }
@@ -384,38 +471,36 @@
     --s: 1px;
     position: fixed; left: 0; right: 0; box-sizing: border-box; min-height: 88px;
     display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 16px 28px;
-    padding: 16px 180px; color: #eee; background: #19191cf5;
+    padding: 16px 180px; color: var(--ui-text); background: var(--ui-surface);
     font: 13px/1.4 system-ui, sans-serif; user-select: none; z-index: 2;
     opacity: var(--chrome, 1);
     transition: opacity 180ms ease-out;
   }
   .controls.hidden { opacity: 0; pointer-events: none; }
-  .controls :is(button, input):focus-visible { outline: 2px solid #c4b5fd; outline-offset: 4px; }
-  .browse .display-toggle[aria-expanded=true] { background: #c4b5fd; border-color: #c4b5fd; color: #19151f; }
+  .controls :is(button, input):focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 4px; }
   /* scan progress while navidrome indexes the folder (first run, new files) */
   .scan { position: fixed; left: 50%; bottom: 130px; transform: translateX(-50%); padding: 8px 16px; border-radius: 4px;
-    background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 14px; letter-spacing: .12em; text-transform: uppercase; pointer-events: none; z-index: 2; }
+    background: rgba(0, 0, 0, 0.7); color: var(--ui-text); font-size: 14px; letter-spacing: .12em; text-transform: uppercase; pointer-events: none; z-index: 2; }
   .controls label { display: flex; align-items: center; gap: 12px; }
+  .slider-control :global([data-slot=slider]) { flex: 1; min-width: 60px; width: auto; }
+  .grid-size { width: min(100%, 400px); }
+  .grid-size-track { flex: 1; min-width: 60px; }
+  .grid-size > span:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
   .slider-control { flex: 1 1 220px; max-width: 340px; }
-  .slider-control > span { width: 56px; color: #c8c8ce; }
+  .slider-control > span { width: 56px; color: var(--ui-text); }
   .slider-control output { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
   .group { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; }
-  .name { margin-right: 10px; color: #c8c8ce; }
-  .controls .opt { font: inherit; cursor: pointer; padding: 9px 12px; min-height: 40px; color: #c8c8ce; background: transparent; border: 0; border-radius: 6px; transition: color 140ms, background 140ms; }
-  .controls .opt:hover { background: #ffffff10; color: #fff; }
+  .name { margin-right: 10px; color: var(--ui-text); }
+  .controls .opt { font: inherit; cursor: pointer; padding: 9px 12px; min-height: 40px; color: var(--ui-text); background: transparent; border: 0; border-radius: 6px; transition: color 140ms, background 140ms; }
+  .controls .opt:hover { background: var(--ui-muted); color: var(--ui-text); }
   .controls .opt:disabled { color: #787880; cursor: default; background: transparent; }
-  .controls .opt.on { background: #c4b5fd; color: #19151f; }
+  .controls .opt.on { background: var(--ui-accent); color: #111; }
   .find { position: relative; display: flex; align-items: center; width: min(100%, 420px); }
-  .controls input[type=text] { box-sizing: border-box; width: 100%; min-height: 40px; padding: 8px 40px 8px 12px; border: 1px solid #ffffff26; border-radius: 6px; background: #ffffff08; color: #eee; caret-color: #c4b5fd; font: inherit; }
+  .controls input[type=text] { box-sizing: border-box; width: 100%; min-height: 40px; padding: 8px 40px 8px 12px; border: 1px solid #ffffff26; border-radius: 6px; background: #ffffff08; color: var(--ui-text); caret-color: var(--ui-accent); font: inherit; }
   .controls input[type=text]::placeholder { color: #aaaab3; }
-  .controls .clear { cursor: pointer; position: absolute; right: 0; display: grid; place-items: center; width: 40px; height: 40px; background: transparent; border: 0; border-radius: 6px; color: #c8c8ce; }
-  .controls .clear:hover { color: #fff; background: #ffffff10; }
-  .controls input[type=checkbox] { width: 18px; height: 18px; accent-color: #c4b5fd; cursor: pointer; }
-  .controls input[type=range] { appearance: none; flex: 1; min-width: 60px; width: 140px; height: 40px; margin: 0; background: transparent; cursor: pointer; accent-color: #c4b5fd; }
-  .controls input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: #686871; }
-  .controls input[type=range]::-moz-range-track { height: 3px; border-radius: 2px; background: #686871; }
-  .controls input[type=range]::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; margin-top: -6.5px; border-radius: 50%; background: #c4b5fd; transition: background 140ms; }
-  .controls input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #c4b5fd; }
+  .controls .clear { cursor: pointer; position: absolute; right: 0; display: grid; place-items: center; width: 40px; height: 40px; background: transparent; border: 0; border-radius: 6px; color: var(--ui-text); }
+  .controls .clear:hover { color: var(--ui-text); background: var(--ui-muted); }
+  .controls input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--ui-accent); cursor: pointer; }
   @media (max-width: 1100px) { .controls { padding: 72px 24px 16px; } }
   @media (max-width: 700px) {
     .controls { padding: 68px 16px 16px; gap: 8px; }
@@ -423,5 +508,5 @@
     .controls .opt { min-height: 44px; }
     .name { flex-basis: 100%; margin: 0; text-align: center; }
   }
-  @media (prefers-reduced-motion: reduce) { .controls, .controls .opt, .controls input[type=range]::-webkit-slider-thumb { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .controls, .controls .opt { transition: none; } }
 </style>

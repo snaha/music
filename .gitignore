@@ -9,3 +9,6 @@ navidrome/data/
 
 # local web research output
 .firecrawl/
+
+# Agent audit screenshots and reports
+.audit-results/

@@ -24,19 +24,21 @@ export class SpotifyService {
     this.cache = emptyCache(); this.tokens = null; this.generation = 0; this.loginAttempt = 0;
     this.syncing = false; this.progress = ''; this.error = ''; this.retryAt = 0; this.quotaBlocked = false;
     this.indexing = false; this.indexError = ''; this.indexed = { albums: [], tracks: new Map(), indexedTracks: 0 }; this.transitionUntil = 0; this.albumPages = new Map();
+    this.availability = 'disconnected'; this.networkFailures = 0; this.checkingAvailability = null; this.lastPlaybackAt = 0;
     this.refreshing = null; this.cancelLogin = null; this.writeTail = Promise.resolve();
   }
 
   async init() {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     this.config = { ...this.config, ...await readJSON(path.join(this.directory, 'config.json'), {}) };
+    this.cache = await readJSON(path.join(this.directory, 'library.json'), emptyCache());
     if (this.secureStorage.isEncryptionAvailable()) {
       try {
         this.tokens = JSON.parse(this.secureStorage.decryptString(await readFile(path.join(this.directory, 'tokens.bin'))));
-        this.cache = await readJSON(path.join(this.directory, 'library.json'), emptyCache());
         if (this.cache.account !== this.tokens.account) this.cache = emptyCache();
       } catch { this.tokens = null; }
     }
+    this.availability = this.tokens ? 'checking' : 'disconnected';
     this.rebuildIndex();
     return this.snapshot();
   }
@@ -58,17 +60,48 @@ export class SpotifyService {
     if (!page || page.id !== id) throw new Error('Album selection expired. Open the album again.');
     const next = offset + 50 < page.tracks.length ? offset + 50 : null;
     if (next === null) this.albumPages.delete(snapshot);
-    return { tracks: page.tracks.slice(offset, offset + 50), next, snapshot };
+    const tile = this.indexed.albums.find(t => t.id === id);
+    return { tracks: page.tracks.slice(offset, offset + 50), next, snapshot, incomplete: !!tile?.incomplete };
   }
 
   snapshot() {
-    return { connected: !!this.tokens, account: this.cache.account, clientId: this.config.clientId,
+    return { availability: this.availability, connected: !!this.tokens, account: this.cache.account, clientId: this.config.clientId,
       collections: this.cache.collections, albums: this.indexed.albums, indexedTracks: this.indexed.indexedTracks, indexing: this.indexing, indexError: this.indexError,
       inaccessiblePlaylists: this.cache.collections.filter(t => t.kind === 'playlist' && !t.available).length, updatedAt: this.cache.updatedAt, syncing: this.syncing,
       progress: this.progress, error: this.error, retryAt: this.retryAt, quotaBlocked: this.quotaBlocked,
       deviceId: this.config.deviceId, deviceName: this.config.deviceName, sameMac: this.config.sameMac };
   }
   emit() { this.notify(this.snapshot()); }
+
+  setAvailability(value) {
+    if (this.availability !== value) { this.availability = value; this.emit(); }
+  }
+  observeError(error) {
+    if (!this.tokens) return;
+    if (error.status === 401) this.setAvailability('reconnect');
+    else if (error.status === 403) this.setAvailability('restricted');
+    else if (error.status === 404) this.setAvailability('device-unavailable');
+    else if (!error.status && ++this.networkFailures >= 2) this.setAvailability('offline');
+  }
+  async request(url, options) {
+    const generation = this.generation;
+    try { const result = await this.fetch(url, options); if (generation === this.generation) this.networkFailures = 0; return result; }
+    catch (error) { if (generation === this.generation) this.observeError(error); throw error; }
+  }
+  checkAvailability(force = false) {
+    if (this.checkingAvailability) return this.checkingAvailability;
+    if (!this.tokens) { this.setAvailability('disconnected'); return Promise.resolve(this.snapshot()); }
+    if (this.quotaBlocked || Date.now() < this.retryAt || (!force && Date.now() - this.lastPlaybackAt < 30000)) return Promise.resolve(this.snapshot());
+    const generation = this.generation;
+    this.checkingAvailability = (async () => {
+      try {
+        const devices = await this.devices();
+        if (generation === this.generation) this.setAvailability(devices.some(d => d.id === this.config.deviceId && !d.is_restricted) ? 'ready' : 'device-unavailable');
+      } catch { /* Request classification retains the last confirmed state on transient failures. */ }
+      return this.snapshot();
+    })().finally(() => { this.checkingAvailability = null; });
+    return this.checkingAvailability;
+  }
 
   // Serialize atomic writes so disconnect cannot be followed by an old token/cache write.
   persist(name, bytes) {
@@ -89,12 +122,13 @@ export class SpotifyService {
     return this.persist('tokens.bin', this.secureStorage.encryptString(JSON.stringify(this.tokens)));
   }
 
-  async tokenRequest(body) {
-    const r = await this.fetch('https://accounts.spotify.com/api/token', {
+  async tokenRequest(body, classify = true) {
+    const generation = this.generation;
+    const r = await this.request('https://accounts.spotify.com/api/token', {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(body), signal: AbortSignal.timeout(15000),
     });
-    if (!r.ok) throw new SpotifyError('Spotify login expired or was rejected. Connect Spotify again.', r.status);
+    if (!r.ok) { const error = new SpotifyError('Spotify login expired or was rejected. Connect Spotify again.', r.status === 400 ? 401 : r.status); if (classify && generation === this.generation) this.observeError(error); throw error; }
     return r.json();
   }
 
@@ -120,7 +154,7 @@ export class SpotifyService {
     const generation = this.generation;
     const token = await this.accessToken();
     if (generation !== this.generation) throw new Error('Spotify connection changed.');
-    const r = await this.fetch(`https://api.spotify.com/v1${endpoint}`, {
+    const r = await this.request(`https://api.spotify.com/v1${endpoint}`, {
       method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000),
     });
@@ -137,9 +171,9 @@ export class SpotifyService {
       this.error = this.quotaBlocked ? 'Spotify API quota exhausted. Retry later from Settings.' : 'Spotify is rate limiting requests. The queue is preserved.';
       this.emit(); throw new SpotifyError(this.error, 429, this.retryAt);
     }
-    if (!r.ok) throw new SpotifyError(r.status === 403 ? 'Spotify denied access. Check Premium, the app allowlist, and device permissions.' :
+    if (!r.ok) { const error = new SpotifyError(r.status === 403 ? 'Spotify denied access. Check Premium, the app allowlist, and device permissions.' :
       r.status === 404 ? 'Spotify device unavailable. Open Spotify Desktop and select it again in Settings.' :
-      r.status === 401 ? 'Reconnect Spotify in Settings.' : `Spotify request failed (${r.status}).`, r.status);
+      r.status === 401 ? 'Reconnect Spotify in Settings.' : `Spotify request failed (${r.status}).`, r.status); this.observeError(error); throw error; }
     return data;
   }
 
@@ -175,29 +209,41 @@ export class SpotifyService {
       });
     });
     const token = await this.tokenRequest({ grant_type: 'authorization_code', code: code.code,
-      redirect_uri: code.redirectUri, client_id: clientId, code_verifier: verifier });
+      redirect_uri: code.redirectUri, client_id: clientId, code_verifier: verifier }, false);
+    if (attempt !== this.loginAttempt) throw new Error('Spotify login was canceled.');
+    // Verify the new account before changing the existing connection or saved library.
+    const response = await this.fetch('https://api.spotify.com/v1/me', {
+      headers: { Authorization: `Bearer ${token.access_token}` }, signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new SpotifyError('Spotify denied access. Check Premium and the app allowlist.', response.status);
+    const account = await response.json();
     if (attempt !== this.loginAttempt) throw new Error('Spotify login was canceled.');
     await this.disconnect();
+    if (this.cache.account !== account.id) this.cache = emptyCache();
+    this.cache.account = account.id; this.rebuildIndex();
     this.config.clientId = clientId;
-    this.tokens = { ...token, expiresAt: Date.now() + token.expires_in * 1000 };
-    try {
-      const account = await this.api('/me');
-      this.tokens.account = account.id; this.cache.account = account.id;
-      await this.saveTokens(); await this.saveConfig();
-      this.error = ''; this.emit();
-      void this.refreshLibrary();
-      return this.snapshot();
-    } catch (error) { await this.disconnect(); throw error; }
+    this.tokens = { ...token, account: account.id, expiresAt: Date.now() + token.expires_in * 1000 };
+    await this.saveTokens(); await this.saveConfig(); await this.saveCache();
+    this.availability = 'checking'; this.error = ''; this.emit();
+    void this.refreshLibrary(); void this.checkAvailability(true);
+    return this.snapshot();
   }
 
   async disconnect() {
     this.cancelLogin?.(); this.loginAttempt++; this.generation++; this.tokens = null; this.refreshing = null;
-    this.albumPages.clear(); this.cache = emptyCache(); this.rebuildIndex(); this.indexing = false; this.indexError = ''; this.syncing = false; this.progress = ''; this.error = '';
-    this.quotaBlocked = false; this.retryAt = 0;
+    this.albumPages.clear(); this.indexing = false; this.indexError = ''; this.syncing = false; this.progress = ''; this.error = '';
+    this.quotaBlocked = false; this.retryAt = 0; this.networkFailures = 0; this.availability = 'disconnected'; this.lastPlaybackAt = 0;
     this.config.deviceId = ''; this.config.deviceName = ''; this.config.sameMac = false;
     await this.writeTail.catch(() => {});
-    await Promise.all(['tokens.bin', 'library.json'].map((name) => rm(path.join(this.directory, name), { force: true })));
-    await this.saveConfig(); this.emit(); return this.snapshot();
+    await rm(path.join(this.directory, 'tokens.bin'), { force: true });
+    await this.saveCache(); await this.saveConfig(); this.emit(); return this.snapshot();
+  }
+
+  async removeLibrary() {
+    await this.disconnect(); this.generation++;
+    this.cache = emptyCache(); this.rebuildIndex();
+    await rm(path.join(this.directory, 'library.json'), { force: true });
+    this.emit(); return this.snapshot();
   }
 
   async refreshLibrary(manual = false) {
@@ -256,9 +302,18 @@ export class SpotifyService {
     if (!tile || !tile.available) throw new Error('Spotify does not expose the contents of this collection.');
     if (!Number.isInteger(offset) || offset < 0) throw new Error('Invalid page.');
     const key = `${id}:${offset}`;
-    if (this.cache.pages[key]) return this.cache.pages[key];
     const indexed = this.cache.index?.sources[id];
     if (indexed) return { tracks: indexed.tracks.slice(offset, offset + 50), next: offset + 50 < indexed.tracks.length ? offset + 50 : null };
+    if (this.cache.pages[key]) {
+      const page = this.cache.pages[key];
+      if (this.availability !== 'ready' && page.next !== null && !this.cache.pages[`${id}:${page.next}`]) return { ...page, next: null, incomplete: true };
+      return page;
+    }
+    if (this.availability !== 'ready') {
+      const pending = this.cache.index?.pending[id];
+      const tracks = pending?.tracks ?? [];
+      return { tracks: tracks.slice(offset, offset + 50), next: offset + 50 < tracks.length ? offset + 50 : null, incomplete: true };
+    }
     const generation = this.generation;
     const endpoint = id === 'spotify:liked' ? '/me/tracks' : tile.kind === 'album' ? `/albums/${encodeURIComponent(tile.rawId)}/tracks` : `/playlists/${encodeURIComponent(tile.rawId)}/items`;
     const data = await this.api(`${endpoint}?limit=50&offset=${offset}`);
@@ -275,11 +330,13 @@ export class SpotifyService {
     if (!device || device.is_restricted) throw new Error('Choose an available Spotify device.');
     if (sameMac && device.type?.toLowerCase() !== 'computer') throw new Error('Mixed playback needs Spotify Desktop on this Mac.');
     Object.assign(this.config, { deviceId: id, deviceName: device.name, sameMac: !!sameMac });
-    await this.saveConfig(); this.emit(); return this.snapshot();
+    await this.saveConfig(); this.setAvailability('ready'); this.emit(); return this.snapshot();
   }
   async playback() {
     const state = await this.api('/me/player');
     if (process.env.MUSIC_PLAYBACK_TRACE === '1') console.info('spotify-playback', JSON.stringify({ at: Date.now(), playing: state?.is_playing, progress: state?.progress_ms, duration: state?.item?.duration_ms, type: state?.currently_playing_type }));
+    this.lastPlaybackAt = Date.now();
+    this.setAvailability(state?.device?.id === this.config.deviceId ? 'ready' : 'device-unavailable');
     if (!state) return null;
     return { deviceId: state.device?.id, playing: !!state.is_playing, progress: (state.progress_ms ?? 0) / 1000,
       track: musicTrack(state.item), type: state.currently_playing_type, shuffle: state.shuffle_state,

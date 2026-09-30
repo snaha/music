@@ -43,7 +43,7 @@ pnpm --dir desktop build:frontend
 The initial client ID can also be supplied through `SPOTIFY_CLIENT_ID` when launching. Root `.env` files
 are ignored by Git and are not read by the app. `SPOTIFY_CLIENT_SECRET` is neither needed nor loaded.
 Tokens are encrypted with Electron `safeStorage` and stored in the app data folder, never in renderer
-storage or LAN share links. Disconnect removes tokens and the account's cached library.
+storage or LAN share links. Disconnect removes credentials and output selection but keeps saved library metadata. Remove saved Spotify library in Settings disconnects and deletes that metadata after confirmation.
 
 Each friend installs their own copy and authorizes their own Premium account. Add their account to the
 developer app's allowlist before they connect. Spotify currently permits up to five authenticated users
@@ -71,7 +71,7 @@ in development mode, and the app owner must also have Premium. See [quota modes]
   accessible playlists with at most two requests in flight. Playlist snapshots skip unchanged contents;
   interrupted playlist pages resume. Failed scans retain complete previous membership, and successful
   source scans reconcile removals. Cache writes are batched every five seconds and at completion.
-  Playback transitions pause discovery. Disconnect removes the expanded account cache without affecting local music.
+  Playback transitions pause discovery. Disconnected libraries remain browsable from saved metadata. Reconnecting the same account retains it; connecting a different account replaces it.
 - Counts distinguish albums, playlists, unique indexed tracks, and inaccessible playlists. Spotify links
   open the original collection; artwork and metadata come from Spotify. No Spotify audio is downloaded.
 
@@ -90,7 +90,7 @@ checks Spotify more often near a track ending. An ambiguous pause stays paused. 
 or repeat change made outside Music suspends automatic queue advancement. Press Play to reclaim control.
 
 An expired session, disconnected device, unavailable track, rate limit, or exhausted API quota leaves the
-queue intact and shows a recovery message. Use Settings to reconnect/reselect the device, wait out a rate
+queue intact and shows a recovery message. Unplayable Spotify covers are dimmed with a reason badge; unavailable outputs have a device badge. Clicking a blocked cover opens saved tracks and recovery actions. Adding cached tracks to a queue remains possible. Availability checks run on activation and every 30 seconds while visible, reuse playback observations, and wait through rate limits. Two consecutive network failures show offline state. Use Settings to reconnect/reselect the device, wait out a rate
 limit, or explicitly retry a quota error later. Local playback remains usable without connecting Spotify.
 Local scrobbling stays on the local audio path; Spotify maintains its own listening history. Existing
 LAN sharing serves local music and never receives Spotify tokens, remote-control access, or captured audio.

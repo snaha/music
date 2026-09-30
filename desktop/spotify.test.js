@@ -14,6 +14,7 @@ async function service(t, fetchImpl) {
   } });
   await s.init(); s.config.clientId = 'a'.repeat(32);
   s.tokens = { access_token: 'old', refresh_token: 'refresh', expiresAt: 0, account: 'me' };
+  s.availability = 'ready';
   return s;
 }
 
@@ -55,7 +56,7 @@ test('quota exhaustion stops automatic API retries', async (t) => {
   await assert.rejects(s.api('/me')); assert.equal(calls, 1);
 });
 
-test('disconnect clears tokens and cache and cannot be undone by a late refresh', async (t) => {
+test('disconnect clears tokens and retains cache and cannot be undone by a late refresh', async (t) => {
   let finish;
   const s = await service(t, () => new Promise((resolve) => { finish = resolve; }));
   const pending = s.accessToken();
@@ -142,4 +143,68 @@ test('connection refuses to persist credentials without OS encryption', async (t
   const s = await service(t, async () => { throw new Error('Should not call Spotify'); });
   s.secureStorage.isEncryptionAvailable = () => false;
   await assert.rejects(s.connect('a'.repeat(32)), /encryption is unavailable/);
+});
+
+test('disconnect retains account metadata through restart; removal deletes it', async t => {
+  const s = await service(t, async () => { throw new Error('No network'); });
+  s.cache.account = 'me'; s.cache.collections = [{ id: 'spotify:playlist:p', kind: 'playlist', available: true }];
+  s.cache.index.sources.p = undefined;
+  await s.disconnect();
+  assert.equal(s.snapshot().availability, 'disconnected'); assert.equal(s.cache.collections.length, 1);
+  await s.init(); assert.equal(s.cache.account, 'me'); assert.equal(s.cache.collections.length, 1);
+  await s.removeLibrary(); await s.init(); assert.equal(s.cache.collections.length, 0);
+  await assert.rejects(readFile(path.join(s.directory, 'library.json')), { code: 'ENOENT' });
+});
+
+test('partial cached playlist remains partial and never requests the network while disconnected', async t => {
+  let calls = 0;
+  const s = await service(t, async () => { calls++; throw new Error('No network'); });
+  s.cache.collections = [{ id: 'spotify:playlist:p', kind: 'playlist', available: true }];
+  s.cache.index.pending['spotify:playlist:p'] = { tracks: Array.from({ length: 60 }, (_, i) => ({ id: String(i) })), next: 100 };
+  await s.disconnect();
+  const first = await s.tracks('spotify:playlist:p'); assert.equal(first.tracks.length, 50); assert.equal(first.next, 50);
+  const last = await s.tracks('spotify:playlist:p', 50); assert.equal(last.tracks.length, 10); assert.equal(last.incomplete, true);
+  assert.equal(calls, 0); assert.equal(s.cache.index.sources['spotify:playlist:p'], undefined);
+});
+
+test('availability checks serialize, retain appearance on one network failure, and recover', async t => {
+  let calls = 0, mode = 'ready';
+  const s = await service(t, async () => {
+    calls++; await new Promise(r => setTimeout(r, 5));
+    if (mode === 'network') throw new TypeError('offline');
+    if (mode === 'restricted') return Response.json({}, { status: 403 });
+    if (mode === 'revoked') return Response.json({}, { status: 400 });
+    return Response.json({ devices: mode === 'missing' ? [] : [{ id: 'mac', is_restricted: false }] });
+  });
+  s.tokens.expiresAt = Date.now() + 3600000; s.config.deviceId = 'mac';
+  await Promise.all([s.checkAvailability(true), s.checkAvailability(true)]); assert.equal(calls, 1); assert.equal(s.availability, 'ready');
+  mode = 'network'; await s.checkAvailability(true); assert.equal(s.availability, 'ready');
+  await s.checkAvailability(true); assert.equal(s.availability, 'offline');
+  mode = 'missing'; await s.checkAvailability(true); assert.equal(s.availability, 'device-unavailable');
+  mode = 'restricted'; await s.checkAvailability(true); assert.equal(s.availability, 'restricted');
+  mode = 'ready'; await s.checkAvailability(true); assert.equal(s.availability, 'ready');
+  mode = 'revoked'; s.tokens.expiresAt = 0; await s.checkAvailability(true); assert.equal(s.availability, 'reconnect');
+  const before = calls; s.retryAt = Date.now() + 60000; await s.checkAvailability(true); assert.equal(calls, before);
+});
+
+for (const account of ['me', 'different']) test(`OAuth connection preserves only the matching account cache: ${account}`, async t => {
+  const s = await service(t, async url => url.includes('/api/token') ? Response.json({ access_token: 'new', refresh_token: 'r', expires_in: 3600 }) : Response.json({ id: account }));
+  s.cache.account = 'me'; s.cache.collections = [{ id: 'saved', kind: 'playlist' }];
+  s.refreshLibrary = async () => s.snapshot(); s.checkAvailability = async () => s.snapshot();
+  s.openExternal = async url => {
+    const auth = new URL(url), callback = new URL(auth.searchParams.get('redirect_uri'));
+    callback.search = new URLSearchParams({ code: 'code', state: auth.searchParams.get('state') }).toString(); await fetch(callback);
+  };
+  await s.connect('a'.repeat(32)); assert.equal(s.cache.account, account); assert.equal(s.cache.collections.length, account === 'me' ? 1 : 0);
+});
+
+test('failed OAuth account verification preserves the previous credentials and cache', async t => {
+  const s = await service(t, async url => url.includes('/api/token') ? Response.json({ access_token: 'new', expires_in: 3600 }) : Response.json({}, { status: 403 }));
+  s.cache.account = 'me'; s.cache.collections = [{ id: 'saved', kind: 'playlist' }];
+  s.openExternal = async url => {
+    const auth = new URL(url), callback = new URL(auth.searchParams.get('redirect_uri'));
+    callback.search = new URLSearchParams({ code: 'code', state: auth.searchParams.get('state') }).toString(); await fetch(callback);
+  };
+  await assert.rejects(s.connect('a'.repeat(32)), { status: 403 });
+  assert.equal(s.tokens.access_token, 'old'); assert.equal(s.cache.collections[0].id, 'saved');
 });

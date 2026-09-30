@@ -1,0 +1,71 @@
+/* Local styling for shadcn-svelte; avoids a global CSS reset on the cover wall. */
+:root { --ui-surface: #18181b; --ui-muted: #27272a; --ui-border: #ffffff26; --ui-text: #fafafa; --ui-accent: #a3e635; --ui-radius: 9px; --ui-text-muted: #bdc2c7; --ui-font: "Avenir Next", "Segoe UI", system-ui, sans-serif; }
+:root[data-components=classic] { --ui-surface: #111; --ui-muted: #222; --ui-border: #ffffff40; --ui-accent: #eee; --ui-radius: 3px; }
+:root[data-components=neon] { --ui-surface: #151427; --ui-muted: #292442; --ui-border: #a78bfa55; --ui-accent: #c4b5fd; --ui-radius: 16px; }
+.cn-button[data-slot=button] { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px; box-sizing: border-box; white-space: nowrap; font: inherit; text-decoration: none; padding: 8px 14px; min-height: 36px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-muted); color: var(--ui-text); cursor: pointer; transition: background-color 120ms, border-color 120ms; }
+.cn-button-variant-default[data-slot=button] { background: var(--ui-accent); border-color: var(--ui-accent); color: #111; }
+.cn-button-variant-outline[data-slot=button] { background: var(--ui-surface); }
+.cn-button-variant-ghost[data-slot=button], .cn-button-variant-link[data-slot=button] { background: transparent; border-color: transparent; }
+.cn-button-size-sm[data-slot=button], .cn-button-size-xs[data-slot=button] { min-height: 30px; padding: 5px 10px; font-size: 13px; }
+.cn-button[data-slot=button]:hover { filter: brightness(1.15); }
+.cn-button[data-slot=button]:disabled { opacity: .4; cursor: default; pointer-events: none; }
+.cn-button[data-slot=button]:focus-visible, [data-slot=slider-thumb]:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
+[data-slot=slider] { position: relative; display: flex; align-items: center; width: 110px; min-width: 80px; height: 28px; touch-action: none; user-select: none; }
+[data-slot=slider-track] { position: relative; display: block; flex: 1; height: 5px; overflow: hidden; border-radius: 99px; background: #ffffff26; }
+[data-slot=slider-range] { position: absolute; height: 100%; background: var(--ui-accent); }
+[data-slot=slider-thumb] { display: block; width: 15px; height: 15px; box-sizing: border-box; border: 2px solid var(--ui-accent); border-radius: 50%; background: var(--ui-surface); }
+:root:not([data-components=classic]) .browse { background: var(--ui-surface); border-bottom: 1px solid var(--ui-border); }
+:root:not([data-components=classic]) .browse :is(input[type=search], select) { background: var(--ui-muted); color: var(--ui-text); border: 1px solid var(--ui-border); border-radius: var(--ui-radius); }
+:root:not([data-components=classic]) .browse .view-tabs button { border-radius: var(--ui-radius); }
+:root:not([data-components=classic]) .browse .view-tabs button[aria-selected=true] { background: var(--ui-accent); color: #111; }
+:root[data-components=neon] .browse { box-shadow: 0 2px 18px #8b5cf61a; }
+@media (prefers-reduced-motion: reduce) { .cn-button[data-slot=button] { transition: none; } }
+.library-select-field { display: flex; align-items: center; min-width: 135px; width: 180px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-muted); }
+.library-select-field input { flex: 1; min-width: 0; width: 100%; box-sizing: border-box; background: transparent !important; border: 0 !important; color: var(--ui-text); padding: 8px 10px; font: inherit; outline: none; }
+.library-select-field:focus-within { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.library-select-field button { flex: 0 0 28px; padding: 5px; border: 0; background: transparent; color: var(--ui-text); cursor: pointer; }
+.library-select-menu { z-index: 100; width: max(230px, var(--bits-combobox-anchor-width)); max-width: min(380px, calc(100vw - 24px)); max-height: min(360px, var(--bits-combobox-content-available-height)); overflow-y: auto; background: var(--ui-surface); color: var(--ui-text); border: 1px solid var(--ui-border); border-radius: var(--ui-radius); padding: 5px; box-shadow: 0 12px 36px #0009; font: 14px/1.4 system-ui; }
+.library-select-item { display: flex; justify-content: space-between; gap: 12px; padding: 9px 10px; border-radius: 5px; cursor: pointer; }
+.library-select-item[data-highlighted] { background: var(--ui-muted); outline: none; }
+.library-select-item[data-selected] { color: var(--ui-accent); }
+.library-select-note, .library-select-more { padding: 10px; color: #aaa; font: inherit; }
+.library-select-more { width: 100%; border: 0; background: var(--ui-muted); cursor: pointer; border-radius: 5px; }
+.grid-size-track { width: clamp(140px, 30vw, 420px); } .grid-size-track [data-slot=slider] { width: 100%; }
+.browse .library-select-field { width: 145px; min-width: 110px; }
+.browse .library-select-field input { padding: 6px 9px; height: 32px; }
+.browse .view-tabs button, .browse input[type=search] { min-height: 32px; padding: 6px 10px; }
+@media (max-width: 700px) { .browse .library-select-field { width: 100%; } }
+.cn-button-variant-ghost[data-slot=button][aria-pressed=true] { color: var(--ui-accent); background: var(--ui-muted); border-color: var(--ui-border); }
+.browse .cn-button-variant-ghost[data-slot=button]:hover { background: var(--ui-muted); }
+@media (max-width: 700px) {
+  .browse .library-select-field { min-width: 0; width: 100%; }
+  .browse .library-select-field input { font-size: 12px; padding: 6px; }
+  .browse .library-select-field button { flex-basis: 20px; }
+  .browse .library-details { width: min(320px, calc(100vw - 40px)); }
+  .controls .grid-size { flex-wrap: wrap; justify-content: center; height: auto; }
+  .controls .grid-size-track { width: 140px; }
+  .controls .group { gap: 6px; row-gap: 8px; }
+}
+
+/* Shared typography and browser surfaces for the control layer. */
+:root { --ui-text-muted: color-mix(in srgb, var(--ui-text) 72%, var(--ui-surface)); }
+.browse, .component-panel, .library-select-menu { font-family: var(--ui-font); }
+::selection { background: var(--ui-accent); color: #111; }
+.library-select-field input { caret-color: var(--ui-accent); }
+.library-select-field input::placeholder { color: var(--ui-text-muted); opacity: 1; }
+.library-select-menu, .component-panel { scrollbar-width: thin; scrollbar-color: var(--ui-border) var(--ui-surface); }
+
+/* Controls settle quickly; position and value changes stay synchronous. */
+[data-slot=slider-thumb] { transition: transform 140ms cubic-bezier(.16,1,.3,1), background-color 120ms; }
+[data-slot=slider]:hover [data-slot=slider-thumb], [data-slot=slider-thumb]:focus-visible { transform: scale(1.18); }
+[data-slot=slider]:active [data-slot=slider-thumb] { transform: scale(1.3); background: var(--ui-accent); }
+.library-select-menu { transform-origin: var(--bits-combobox-content-transform-origin, top center); }
+.library-select-menu[data-state=open] { animation: select-arrive 180ms cubic-bezier(.16,1,.3,1); }
+.library-select-menu[data-state=closed] { animation: select-leave 100ms ease-in; pointer-events: none; }
+@keyframes select-arrive { from { opacity: 0; transform: translateY(-6px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes select-leave { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-3px) scale(.99); } }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot=slider-thumb] { transition: background-color 80ms; }
+  [data-slot=slider]:is(:hover, :active) [data-slot=slider-thumb], [data-slot=slider-thumb]:focus-visible { transform: none; }
+  .library-select-menu[data-state] { animation: none; }
+}

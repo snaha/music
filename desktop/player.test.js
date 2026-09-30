@@ -44,7 +44,7 @@ test('actual Svelte player handles mixed queues, duplicate entries, reorder, rem
   const remote = { ...local, id: 'spotify:track:1', source: 'spotify', uri: 'spotify:track:1', title: 'Spotify' };
   try {
     m.session.api = { scrobble: async () => ({}) }; m.session.base = 'http://127.0.0.1:1234';
-    Object.assign(m.spotify, { connected: true, deviceId: 'mac', sameMac: true });
+    Object.assign(m.spotify, { connected: true, availability: 'ready', deviceId: 'mac', sameMac: true });
     const version = m.play([local, remote, { ...local, title: 'Local again' }]);
     await settle(); assert.equal(m.player.playing, true);
     m.next(); await settle(); assert.equal(m.player.song.source, 'spotify'); assert.equal(audioElements[0].paused, true);
@@ -58,11 +58,11 @@ test('actual Svelte player handles mixed queues, duplicate entries, reorder, rem
     assert.equal(m.player.queue.length, 1);
     m.spotify.sameMac = false;
     m.play([local, remote]); await settle();
-    assert.match(m.player.error, /Mixed queues/); assert.equal(audioElements[0].paused, true);
-    assert.equal(m.player.queue.length, 2, 'failed output validation retains the queue');
+    assert.match(m.player.error, /Mixed queues/); assert.equal(audioElements[0].paused, false);
+    assert.equal(m.player.queue.length, 1, 'failed output validation preserves the existing queue');
     m.spotify.sameMac = true;
     m.play([local, { ...remote, available: false }]); await settle(); m.next(); await settle();
-    assert.match(m.player.error, /unavailable/); assert.equal(audioElements[0].paused, true);
+    assert.match(m.player.error, /unavailable/); assert.equal(audioElements[0].paused, false);
     const queueIds = m.player.queue.map((t) => t.id);
     m.spotify.albums = Array.from({ length: 10000 }, (_, i) => ({ id: `spotify:album:${i}`, rawId: String(i), source: 'spotify', kind: 'album', title: String(i), sub: 'Artist', count: 10, cover: '', available: true }));
     m.updateSpotifyCollections();
@@ -76,6 +76,11 @@ test('actual Svelte player handles mixed queues, duplicate entries, reorder, rem
     window.spotify.albumTracks = async id => { assert.equal(id, partial.id); return { tracks: [remote], next: null }; };
     await m.pick(partial); await settle(); assert.deepEqual(m.player.queue.map(t => t.id), [remote.id]);
     await m.addCollection(partial); assert.deepEqual(m.player.queue.map(t => t.id), [remote.id, remote.id]);
+    await m.pause(); m.spotify.availability = 'disconnected'; m.spotify.connected = false;
+    m.updateSpotifyCollections(); assert.equal(m.library.tiles.length, 10000, 'disconnected cached albums remain visible');
+    const savedQueue = m.player.queue.map(t => t.id);
+    m.play([remote]); await settle(); assert.deepEqual(m.player.queue.map(t => t.id), savedQueue);
+    await m.addCollection(partial); assert.equal(m.player.queue.length, savedQueue.length + 1, 'cached tracks can be queued while disconnected');
     const connections = new Map();
     const node = () => { const value = { gain: { value: 1 }, connect(target) { connections.get(value).push(target); } }; connections.set(value, []); return value; };
     globalThis.AudioContext = class {

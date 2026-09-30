@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { fly } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import { reveal } from './ui/motion';
 
   // a translucent layer over the grid, closed with a chevron.
   // 'bottom': rises from the player bar and leaves it visible
@@ -9,7 +8,7 @@
   let { from = 'bottom', onclose, children }: { from?: 'bottom' | 'right'; onclose: () => void; children: Snippet } = $props();
 </script>
 
-<div class="panel" class:right={from === 'right'} transition:fly={from === 'right' ? { x: 600, duration: 420, easing: cubicOut } : { y: 400, duration: 420, easing: cubicOut }}>
+<div class="panel" class:right={from === 'right'} in:reveal={from === 'right' ? { x: 32, duration: 260 } : { y: 24, duration: 260 }} out:reveal={from === 'right' ? { x: 16, duration: 140 } : { y: 12, duration: 140 }}>
   <!-- the whole strip along the edge closes the drawer; the chevron sits centred in it -->
   <button class="handle" onclick={onclose} aria-label={from === 'right' ? 'Back' : 'Close'}><span>{from === 'right' ? '›' : '⌄'}</span></button>
   {@render children()}
@@ -24,7 +23,7 @@
   }
   /* right variant: the bottom layout rotated — chevron on the right edge, centred, pointing right */
   .panel:not(.right) { top: var(--browsebar, 0px); }
-  .panel.right { inset: var(--topbar, 0px) var(--sidebar, 0px) var(--botbar, 0px) 0; padding: 0; flex-direction: row-reverse; }
+  .panel.right { inset: var(--topbar, 0px) 0 var(--botbar, 0px) auto; width: min(520px, 100vw); padding: 0; flex-direction: row-reverse; background: var(--ui-surface, #18181b); border-left: 1px solid var(--ui-border, #ffffff26); box-shadow: -12px 0 40px #0005; z-index: 4; }
   .handle {
     all: unset; cursor: pointer; align-self: stretch; display: flex; align-items: center; justify-content: center;
     padding: calc(6 * var(--s)) 0; font-size: calc(32 * var(--s)); line-height: 1; color: #fff; transition: background 250ms;
@@ -37,4 +36,5 @@
     opacity: 1; font-weight: 700; transform: scale(1.15);
     text-shadow: 0 0 calc(4 * var(--s)) rgba(255, 255, 255, 0.9), 0 0 calc(20 * var(--s)) rgba(255, 255, 255, 0.5);
   }
+  @media (prefers-reduced-motion: reduce) { .handle, .handle span { transition: none; } .handle:hover span, .handle:focus-visible span { transform: none; } }
 </style>

@@ -32,9 +32,9 @@ export class PlaybackController {
   play(track: Track) {
     return this.schedule(async (current) => {
       const next = this.adapters[track.source];
+      next.available(track);
       if (this.active) await this.adapters[this.active].pause();
       if (!current()) return;
-      next.available(track);
       await next.prepare(track);
       if (!current()) return;
       this.active = track.source; this.current = track;

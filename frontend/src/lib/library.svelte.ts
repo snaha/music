@@ -1,7 +1,7 @@
 import type { AlbumID3, Child, Playlist } from 'subsonic-api';
 import { coverUrl, ok, session } from './api.svelte';
 import { appendToSession, enqueue, play, player, type Grid } from './player.svelte';
-import { spotify } from './spotify.svelte';
+import { spotify, spotifyPlayable, spotifyMessage } from './spotify.svelte';
 import { localId, type Collection, type Track } from './music';
 
 export type Tile = Collection;
@@ -18,7 +18,7 @@ export const localTrack = (s: Child): Track => ({ id: localId('track', s.id), ra
   cover: coverUrl(s.coverArt, 512), duration: s.duration, track: s.track, disc: s.discNumber, available: true });
 
 function spotifyTiles(): Tile[] {
-  if (!window.spotify || !spotify.connected) return [];
+  if (!window.spotify) return [];
   return library.mode === 'playlists' ? spotify.collections.filter(t => t.kind === 'playlist') : spotify.albums;
 }
 
@@ -96,8 +96,9 @@ export async function* trackPages(t: Tile): AsyncGenerator<Track[]> {
     if (t.kind === 'artist') { const albums = spotifyAlbums(t); if (albums.length) yield* trackPages(rnd(albums)); return; }
     let snapshot: string | undefined;
     for (let offset: number | null = 0; offset !== null;) {
-      const page: { tracks: Track[]; next: number | null; snapshot?: string } = t.kind === 'album' ? await window.spotify!.albumTracks(t.id, offset, snapshot) : await window.spotify!.tracks(t.id, offset);
+      const page: { tracks: Track[]; next: number | null; snapshot?: string; incomplete?: boolean } = t.kind === 'album' ? await window.spotify!.albumTracks(t.id, offset, snapshot) : await window.spotify!.tracks(t.id, offset);
       if ('snapshot' in page) snapshot = page.snapshot as string; yield page.tracks; offset = page.next;
+      if (page.incomplete && page.next === null) throw new Error('Connect Spotify to load the remaining tracks.');
     }
     return;
   }
@@ -108,6 +109,7 @@ export async function* trackPages(t: Tile): AsyncGenerator<Track[]> {
   if (albums.length) yield* trackPages(album(rnd(albums)));
 }
 export async function pick(t: Tile) {
+  if (t.source === 'spotify' && !spotifyPlayable()) { player.error = spotifyMessage(); player.view = 'settings'; return; }
   const mine = ++pickRequest; player.requesting = true; player.error = '';
   const selection = ++player.requestRevision;
   try {
@@ -119,6 +121,7 @@ export async function pick(t: Tile) {
         if (version === undefined) {
           if (selection !== player.requestRevision) return;
           version = play(tracks);
+          if (version < 0) return;
         }
         else if (!appendToSession(tracks, version)) return;
       }
@@ -138,9 +141,10 @@ export function addCollection(t: Tile) {
     player.error = ''; let version: number | undefined;
     try {
       for await (const tracks of trackPages(t)) {
-        if (!tracks.length) continue;
-        if (version === undefined) version = enqueue(tracks);
-        else if (!appendToSession(tracks, version)) return;
+        const included = tracks.filter(track => track.available);
+        if (!included.length) continue;
+        if (version === undefined) version = enqueue(included);
+        else if (!appendToSession(included, version)) return;
       }
       if (version === undefined) throw new Error('This collection contains no music tracks.');
     } catch (error) { player.error = (error as Error).message; }
@@ -149,7 +153,7 @@ export function addCollection(t: Tile) {
   return addTail;
 }
 export function grid(): Grid {
-  const tiles = library.visible.filter((t) => t.available), cum = new Float64Array(tiles.length + 1);
+  const tiles = library.visible.filter((t) => t.available && (t.source !== 'spotify' || spotifyPlayable())), cum = new Float64Array(tiles.length + 1);
   tiles.forEach((t, i) => (cum[i + 1] = cum[i] + Math.max(1, t.count)));
   return {
     count: cum[tiles.length], key: tiles.map((t) => t.id).join(),

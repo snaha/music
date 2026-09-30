@@ -1,5 +1,5 @@
 import { session, streamUrl } from './api.svelte';
-import { spotify } from './spotify.svelte';
+import { spotify, spotifyPlayable, spotifyMessage } from './spotify.svelte';
 import { PlaybackController, type PlaybackAdapter } from './playback-controller';
 import { confirmSpotify, interpretRemote, type RemoteObservation } from './spotify-playback';
 import { shuffle } from './shuffle';
@@ -8,9 +8,9 @@ import type { Track } from './music';
 export type Order = 'normal' | 'shuffle' | 'random';
 export type Grid = { count: number; key: string; find(albumId: string): number; song(n: number): Promise<Track | undefined> };
 export const player = $state({
-  queue: [] as Track[], index: -1, playing: false, pending: false, requesting: false, requestRevision: 0, suspended: false, error: '',
+  queue: [] as Track[], index: -1, blockedIndex: -1, playing: false, pending: false, requesting: false, requestRevision: 0, suspended: false, error: '',
   time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, topHidden: false, visOpen: false,
-  view: '' as '' | 'share' | 'settings', viewFrom: 'bottom' as 'bottom' | 'right',
+  view: '' as '' | 'share' | 'settings' | 'components', viewFrom: 'bottom' as 'bottom' | 'right',
   get song() { return this.queue[this.index] as Track | undefined; },
 });
 
@@ -41,7 +41,7 @@ const localAdapter: PlaybackAdapter = {
 const remoteAdapter: PlaybackAdapter = {
   available(track) {
     requireMixedOutput();
-    if (!window.spotify || !spotify.connected) throw new Error('Connect Spotify in Settings.');
+    if (!spotifyPlayable()) throw new Error(spotifyMessage());
     if (!track.available) throw new Error('This Spotify track is unavailable. Skip it to continue.');
     if (!spotify.deviceId) throw new Error('Select Spotify Desktop in Settings.');
   },
@@ -88,8 +88,19 @@ function prepareNext() {
   if (track?.source === 'local') warmAudio.src = streamUrl(track.rawId);
   else clearWarm();
 }
+function blocked(track: Track | undefined) {
+  if (track?.source === 'spotify' && (!spotifyPlayable() || !track.available)) {
+    player.error = track.available ? spotifyMessage() : 'This Spotify track is unavailable. Skip it to continue.';
+    player.view = 'settings'; return true;
+  }
+  return false;
+}
 async function start(index: number) {
   const track = player.queue[index]; if (!track) return;
+  if (blocked(track)) { player.blockedIndex = index; return; }
+  try { (track.source === 'spotify' ? remoteAdapter : localAdapter).available(track); }
+  catch (error) { player.error = (error as Error).message; player.view = 'settings'; return; }
+  player.blockedIndex = -1;
   const mine = ++intent;
   player.index = index; player.pending = true; player.suspended = false; player.error = '';
   player.time = 0; player.duration = track.duration ?? 0; playing(false); lastRemote = undefined;
@@ -108,6 +119,8 @@ function rebuildShuffle() {
   if (player.order === 'shuffle') { perm = shuffle(player.queue.length, player.index); cursor = 0; }
 }
 export function play(queue: Track[], index = 0) {
+  if (blocked(queue[Math.max(0, index)])) return -1;
+  if (queue.some(t => t.source === 'spotify') && queue.some(t => t.source === 'local') && !spotify.sameMac) { player.error = 'Mixed queues need Spotify Desktop on this Mac. Choose and confirm it in Settings.'; player.view = 'settings'; return -1; }
   player.requestRevision++;
   queueVersion++;
   randomDraw++; randomGrid = undefined;
@@ -132,6 +145,7 @@ export function enqueue(tracks: Track[]) {
 export function moveQueue(from: number, to: number) {
   if (from < 0 || to < 0 || from >= player.queue.length || to >= player.queue.length) return;
   const current = player.song;
+  player.blockedIndex = -1;
   const [entry] = player.queue.splice(from, 1); player.queue.splice(to, 0, entry);
   player.index = current ? player.queue.indexOf(current) : -1;
   rebuildShuffle(); prepareNext();
@@ -141,6 +155,7 @@ export function removeQueue(index: number) {
   const current = player.song;
   const removingCurrent = index === player.index;
   player.queue.splice(index, 1);
+  player.blockedIndex = -1;
   if (!removingCurrent) player.index = current ? player.queue.indexOf(current) : -1;
   else if (player.queue.length) void start(Math.min(index, player.queue.length - 1));
   else { queueVersion++; player.index = -1; void pause(); }
@@ -167,6 +182,7 @@ async function nextRandom() {
     const track = await grid.song(perm[cursor]);
     if (mine !== randomDraw) return;
     if (!track) throw new Error('This collection has no playable music tracks. Skip to continue.');
+    if (blocked(track)) { cursor--; return; }
     player.queue.push({ ...track }); void start(player.queue.length - 1);
   } catch (error) { if (mine === randomDraw) fail(error); }
   finally { if (mine === randomDraw) player.requesting = false; }
@@ -179,20 +195,21 @@ export function jumpRandom(source: () => Grid) {
 export function jump(index: number) {
   player.requestRevision++;
   randomDraw++;
+  if (blocked(player.queue[index])) return;
   if (player.order === 'shuffle') { player.index = index; rebuildShuffle(); }
   void start(index);
 }
 export function next() {
   player.requestRevision++;
   if (player.order === 'random') return void nextRandom();
-  const index = player.order === 'shuffle' ? perm[cursor + 1] : player.index + 1;
-  if (index < player.queue.length) { if (player.order === 'shuffle') cursor++; void start(index); }
+  const index = player.order === 'shuffle' ? perm[cursor + 1] : (player.blockedIndex >= 0 ? player.blockedIndex : player.index) + 1;
+  if (index < player.queue.length) { if (blocked(player.queue[index])) { player.blockedIndex = index; if (player.order === 'shuffle') cursor++; return; } if (player.order === 'shuffle') cursor++; void start(index); }
   else { void pause(); player.time = player.duration; }
 }
 export function prev() {
   player.requestRevision++;
   if (player.time > 3) return seek(0);
-  if (player.order === 'shuffle') { if (cursor > 0) void start(perm[--cursor]); }
+  if (player.order === 'shuffle') { if (cursor > 0 && !blocked(player.queue[perm[cursor - 1]])) void start(perm[--cursor]); }
   else if (player.index > 0) void start(player.index - 1);
 }
 export async function pause() {
@@ -203,9 +220,10 @@ export async function pause() {
   catch (error) { if (mine === intent) fail(error); }
 }
 export async function toggle() {
+  if (player.blockedIndex >= 0) return start(player.blockedIndex);
   if (player.playing || player.pending) return pause();
   if (!player.song && player.queue.length) return start(0);
-  if (!player.song) return;
+  if (!player.song || blocked(player.song)) return;
   if (player.suspended || controller.current?.id !== player.song.id || player.time >= player.duration - 0.2) return start(player.index);
   const mine = ++intent; player.pending = true;
   try { await controller.resume(); if (mine === intent) { player.pending = false; player.error = ''; playing(true); schedulePoll(1000); } }
@@ -227,7 +245,7 @@ audio.addEventListener('timeupdate', () => {
     scrobbled = true; session.api?.scrobble({ id: localTrack.rawId, submission: true }).catch(() => {});
   }
 });
-audio.addEventListener('ended', () => { if (controller.active === 'local' && !player.pending) next(); });
+audio.addEventListener('ended', () => { if (controller.active === 'local' && !player.pending) { playing(false); next(); } });
 audio.addEventListener('error', () => { if (controller.active === 'local') fail(new Error('Local audio could not be loaded. Check the file and retry or skip.')); });
 audio.addEventListener('pause', () => { if (controller.active === 'local' && !player.pending) playing(false); });
 audio.addEventListener('play', () => { if (controller.active === 'local' && !player.pending) playing(true); });
@@ -244,7 +262,7 @@ async function pollRemote() {
       controller.suspend(); fail(new Error('Playback changed in Spotify. Your queue is paused here; press Play to take control again.')); return;
     }
     if (result === 'unavailable') { fail(new Error('Spotify Desktop is unavailable. Open it, play and pause a track there, then press Play here.')); return; }
-    if (result === 'ended') { lastRemote = undefined; next(); return; }
+    if (result === 'ended') { lastRemote = undefined; playing(false); next(); return; }
     rememberRemote(track, state!.progress, state!.playing); player.time = state!.progress; playing(state!.playing);
   } catch (error) { if (mine === intent) fail(error); }
   finally {

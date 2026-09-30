@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from './ui/button.svelte';
   import Drawer from './Drawer.svelte';
   import SpotifySettings from './SpotifySettings.svelte';
   import { session } from './api.svelte';
@@ -6,60 +7,58 @@
 
   let { art = $bindable(), motion = $bindable(), onclose }: { art: boolean; motion: boolean; onclose: () => void } = $props();
   let paste = $state(''), bad = $state(false);
+  let backgroundFile: HTMLInputElement;
   // a picked file, or SVG / CSS pasted from a generator (fffuel's "copy SVG" or eeencode output)
   async function load(src: File | string) { bad = !(await importBackground(src)); if (!bad) paste = ''; }
 </script>
 
 <Drawer from="right" {onclose}>
   <div class="body">
+    <h1>Settings</h1>
     <SpotifySettings />
     <section>
-      <h2>appearance</h2>
-      <label><input type="checkbox" bind:checked={art} /> with art</label>
-      <label><input type="checkbox" bind:checked={motion} /> motion</label>
+      <h2>Appearance</h2>
+      <label><input type="checkbox" bind:checked={art} /> With art</label>
+      <label><input type="checkbox" bind:checked={motion} /> Motion</label>
       {#if window.desktop}
         <!-- the window reopens with or without the frame, which restarts playback -->
-        <label><input type="checkbox" checked={window.desktop.frame} onchange={(e) => window.desktop!.setFrame(e.currentTarget.checked)} /> native window frame</label>
+        <label><input type="checkbox" checked={window.desktop.frame} onchange={(e) => window.desktop!.setFrame(e.currentTarget.checked)} /> Native window frame</label>
       {/if}
-      <label><input type="checkbox" bind:checked={bg.scroll} /> background scrolls with the cards</label>
-      <label><input type="checkbox" bind:checked={bg.tile} disabled={bg.material !== 'custom'} /> tile the custom background</label>
+      <label><input type="checkbox" bind:checked={bg.scroll} /> Background scrolls with the cards</label>
+      <label><input type="checkbox" bind:checked={bg.tile} disabled={bg.material !== 'custom' && bg.material !== 'noise'} /> Tile the image / svg background</label>
       <p class="import">
-        <span class="k">custom background</span>
-        <label class="btn"><input type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp" onchange={(e) => { const f = e.currentTarget.files?.[0]; if (f) load(f); e.currentTarget.value = ''; }} />choose file</label>
-        <input type="text" placeholder="or paste svg / css" bind:value={paste} spellcheck="false" onchange={() => paste.trim() && load(paste)} />
-        {#if bg.custom}<button class="btn" onclick={clearBackground}>clear</button>{/if}
-        {#if bad}<span class="err">not an svg, png or jpeg</span>{/if}
+        <span class="k">Custom image / SVG background</span>
+        <input bind:this={backgroundFile} hidden type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp" onchange={(e) => { const f = e.currentTarget.files?.[0]; if (f) load(f); e.currentTarget.value = ''; }} />
+        <Button variant="outline" size="sm" onclick={() => backgroundFile.click()}>Choose file</Button>
+        <input type="text" aria-label="Paste SVG or CSS background" placeholder="Or paste SVG / CSS" bind:value={paste} spellcheck="false" onchange={() => paste.trim() && load(paste)} />
+        {#if bg.custom}<Button variant="outline" size="sm" onclick={clearBackground}>Clear</Button>{/if}
+        {#if bad}<span class="err">choose an svg, png, jpeg or webp image</span>{/if}
       </p>
     </section>
     <section>
-      <h2>network</h2>
+      <h2>Network</h2>
       <p><span class="k">server</span> <span class="v">{session.base}</span></p>
     </section>
   </div>
 </Drawer>
 
 <style>
-  .body {
-    flex: 1; min-width: 0; overflow-y: auto; padding: calc(40 * var(--s)) calc(56 * var(--s)); scrollbar-width: thin; scrollbar-color: #333 #0000;
-    display: flex; flex-direction: column; gap: calc(40 * var(--s));
-    font-size: calc(22 * var(--s)); letter-spacing: .08em; text-transform: uppercase; user-select: none;
-  }
-  h2 { margin: 0 0 calc(12 * var(--s)); font-size: .75em; font-weight: 500; opacity: .5; }
-  label { display: flex; align-items: center; gap: calc(16 * var(--s)); padding: calc(10 * var(--s)) 0; cursor: pointer; }
-  /* same round toggle as the top bar's */
-  input { appearance: none; margin: 0; width: calc(24 * var(--s)); height: calc(24 * var(--s)); border: 2px solid #fff9; border-radius: 50%; cursor: pointer; }
-  input:checked { background: #fff; }
-  p { margin: 0; padding: calc(10 * var(--s)) 0; display: flex; gap: calc(24 * var(--s)); align-items: center; flex-wrap: wrap; }
-  .btn { all: unset; display: inline-block; padding: calc(4 * var(--s)) calc(12 * var(--s)); border: 1px solid #fff5; border-radius: 3px; opacity: .6; cursor: pointer; }
-  .btn:hover { opacity: 1; }
-  .btn input[type=file] { display: none; }
-  input[type=text] {
-    appearance: none; width: calc(320 * var(--s)); margin: 0; padding: calc(4 * var(--s)) 0; border: 0; border-bottom: 1px solid #fff6; border-radius: 0; background: none; color: #fff;
-    font: inherit; letter-spacing: inherit; text-transform: none; outline: none; caret-color: #fff;
-  }
-  input[type=text]::placeholder { color: #fff6; text-transform: uppercase; }
-  input:disabled, label:has(input:disabled) { opacity: .4; cursor: default; }
-  .err { color: #f88; opacity: .8; }
-  .k { opacity: .5; }
-  .v { text-transform: none; letter-spacing: .02em; user-select: text; overflow-wrap: anywhere; }
+  .body { flex: 1; min-width: 0; overflow-y: auto; padding: 28px 24px; scrollbar-width: thin; scrollbar-color: var(--ui-border) var(--ui-surface); display: flex; flex-direction: column; gap: 32px; font: 14px/1.5 var(--ui-font); color: var(--ui-text); }
+  h1 { margin: 0; font-size: 24px; line-height: 1.2; font-weight: 650; letter-spacing: -.025em; }
+  h2 { margin: 0 0 12px; font-size: 18px; font-weight: 600; letter-spacing: -.015em; }
+  section { border-top: 1px solid var(--ui-border); padding-top: 24px; }
+  label { display: flex; align-items: center; gap: 12px; min-height: 44px; cursor: pointer; }
+  input[type=checkbox] { flex-shrink: 0; margin: 0; width: 18px; height: 18px; accent-color: var(--ui-accent); cursor: pointer; }
+  input:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
+  p { margin: 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .import { margin-top: 18px; }
+  .import .k { flex-basis: 100%; }
+  input[type=text] { box-sizing: border-box; width: min(260px, 100%); min-width: 0; padding: 9px 12px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-muted); color: var(--ui-text); font: inherit; caret-color: var(--ui-accent); }
+  input[type=text]::placeholder { color: var(--ui-text-muted); opacity: 1; }
+  label:has(input:disabled) { color: var(--ui-text-muted); cursor: default; }
+  input:disabled { opacity: .5; }
+  .err { color: #ffb8ad; }
+  .k { color: var(--ui-text-muted); }
+  .v { user-select: text; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  @media (max-width: 700px) { .body { padding: 24px 18px; } }
 </style>

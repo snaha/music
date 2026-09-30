@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { spotify, spotifyPlayable, spotifyMessage, spotifyRecoveryLabel, checkSpotify } from './spotify.svelte';
+  import Button from './ui/button.svelte';
   import Drawer from './Drawer.svelte';
   import { trackPages, pick, addCollection, type Tile } from './library.svelte';
   import { play, player } from './player.svelte';
@@ -14,14 +16,17 @@
     })();
     return () => { canceled = true; };
   });
-  function listen(index = 0) { play(loading ? [tracks[index]] : tracks, loading ? 0 : index); onclose(); }
+  function recover() { if (spotify.availability === 'offline' || spotify.availability === 'checking') void checkSpotify(true); else { onclose(); player.view = 'settings'; } }
+  function listen(index = 0) { if (tile.source === 'spotify' && !spotifyPlayable()) { recover(); return; } play(loading ? [tracks[index]] : tracks, loading ? 0 : index); onclose(); }
 </script>
 <Drawer {onclose}>
   <section>
+    {#if tile.source === 'spotify' && !spotifyPlayable()}<p role="status">{spotifyMessage()}</p><Button onclick={recover}>{spotifyRecoveryLabel()}</Button>{/if}
+    {#if tile.source === 'spotify' && tile.incomplete}<p>Connect Spotify to load the remaining tracks.</p>{/if}
     <header><h2>{tile.title}</h2><p>{tile.sub} · {tracks.length} included track{tracks.length === 1 ? '' : 's'}{loading ? ' · Loading…' : ''}</p>
-      <button disabled={!tracks.length} onclick={() => { void pick(tile); onclose(); }}>Play included tracks</button>
-      <button disabled={!tracks.length} onclick={() => { void addCollection(tile); onclose(); }}>Add to queue</button>
-      {#if tile.source === 'spotify' && tile.externalUrl}<button onclick={() => window.spotify?.external(tile.externalUrl!).catch(e => (player.error = e.message))}>Open in Spotify ↗</button>{/if}
+      <Button disabled={!tracks.length} onclick={() => { if (tile.source === 'spotify' && !spotifyPlayable()) recover(); else { void pick(tile); onclose(); } }}>Play included tracks</Button>
+      <Button disabled={!tracks.length} onclick={() => { void addCollection(tile); onclose(); }}>{tile.source === 'spotify' && !spotifyPlayable() ? 'Add to queue · Spotify required' : 'Add to queue'}</Button>
+      {#if tile.source === 'spotify' && tile.externalUrl}<Button onclick={() => window.spotify?.external(tile.externalUrl!).catch(e => (player.error = e.message))}>Open in Spotify ↗</Button>{/if}
     </header>
     {#if error}<p role="alert">{error}</p>{/if}
     {#each tracks as track, i (`${i}:${track.id}`)}
@@ -36,9 +41,10 @@
 <style>
   section { padding: 16px 28px 32px; overflow: auto; font: 16px/1.5 system-ui; }
   h2 { margin: 0; } p { color: #aaa; }
-  header { padding-bottom: 18px; }
+  header { padding-bottom: 18px; display: flex; flex-wrap: wrap; gap: 8px; }
+  header h2, header p { width: 100%; overflow-wrap: anywhere; }
   button { font: inherit; color: #eee; background: #252529; border: 1px solid #ffffff30; border-radius: 6px; padding: 8px 12px; cursor: pointer; margin: 0 8px 8px 0; }
   button:disabled { opacity: .4; cursor: default; }
-  .track { display: grid; grid-template-columns: 45px 1fr auto; gap: 14px; width: 100%; text-align: left; background: #1119; }
+  .track { display: grid; grid-template-columns: 35px minmax(0, 1fr) auto; box-sizing: border-box; overflow-wrap: anywhere; gap: 14px; width: 100%; margin-right: 0; text-align: left; background: #1119; }
   small { display: block; color: #aaa; font-size: 12px; }
 </style>

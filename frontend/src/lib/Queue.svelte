@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from './ui/button.svelte';
   import Drawer from './Drawer.svelte';
   import { jump, moveQueue, removeQueue, player } from './player.svelte';
 
@@ -19,9 +20,9 @@
           <span class="d">{fmt(s.duration)}</span>
         </button>
         <span class="queue-actions">
-          <button onclick={() => moveQueue(i, i - 1)} disabled={i === 0} aria-label="Move {s.title} up">↑</button>
-          <button onclick={() => moveQueue(i, i + 1)} disabled={i === player.queue.length - 1} aria-label="Move {s.title} down">↓</button>
-          <button onclick={() => removeQueue(i)} aria-label="Remove {s.title}">×</button>
+          <Button variant="outline" size="sm" onclick={() => moveQueue(i, i - 1)} disabled={i === 0} aria-label="Move {s.title} up">↑</Button>
+          <Button variant="outline" size="sm" onclick={() => moveQueue(i, i + 1)} disabled={i === player.queue.length - 1} aria-label="Move {s.title} down">↓</Button>
+          <Button variant="outline" size="sm" onclick={() => removeQueue(i)} aria-label="Remove {s.title}">×</Button>
         </span>
       </div>
     {/each}
@@ -32,8 +33,6 @@
   .queue-heading { opacity: .7; }
   .select-song { all: unset; display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 16px; flex: 1; min-width: 0; cursor: pointer; }
   .queue-actions { display: flex; gap: 6px; }
-  .queue-actions button { background: #222; border: 1px solid #555; border-radius: 3px; color: #ddd; padding: 5px 8px; cursor: pointer; }
-  .queue-actions button:disabled { opacity: .25; cursor: default; }
   .list { font-size: calc(16 * var(--s)); overflow-y: auto; padding: calc(8 * var(--s)) calc(24 * var(--s)) calc(24 * var(--s)); scrollbar-width: thin; scrollbar-color: #333 #0000; }
   .song {
     display: flex; align-items: center; gap: calc(16 * var(--s));

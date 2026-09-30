@@ -139,9 +139,9 @@
     position: fixed; right: 0; bottom: var(--botbar, 0px); width: min(80vw, calc(340 * var(--s))); box-sizing: border-box;
     display: flex; flex-direction: column; gap: calc(4 * var(--s)); padding: calc(16 * var(--s)) calc(20 * var(--s));
     background: rgba(0, 0, 0, 0.78); color: #fff; font-size: calc(24 * var(--s)); letter-spacing: .08em; text-transform: uppercase; user-select: none;
-    transform: translateX(100%); pointer-events: none; transition: transform 320ms cubic-bezier(.2,.8,.2,1); z-index: 2;
+    transform: translateX(18px); opacity: 0; visibility: hidden; pointer-events: none; transition: transform 140ms cubic-bezier(.16,1,.3,1), opacity 140ms, visibility 0s 140ms; z-index: 2;
   }
-  .menu-panel.open { transform: translateX(0); pointer-events: auto; }
+  .menu-panel.open { transform: translateX(0); opacity: 1; visibility: visible; pointer-events: auto; transition-duration: 240ms, 180ms, 0s; transition-delay: 0s; }
   .menu-panel button { all: unset; cursor: pointer; padding: calc(12 * var(--s)) calc(16 * var(--s)); border-radius: 3px; opacity: .7; }
   .menu-panel button:hover { background: #ffffff14; opacity: 1; }
   .menu-panel button.on { opacity: 1; background: #ffffff1c; }
@@ -166,8 +166,25 @@
   /* the seek line is 2px, but the hit area is 18px tall straddling the bar's top edge (touch and mouse slop);
      hovering thickens the line */
   .progress { --h: 2px; position: absolute; left: 0; right: 0; top: -9px; height: 18px; cursor: pointer; z-index: 1; }
-  .progress::before { content: ''; position: absolute; left: 0; right: 0; top: 9px; height: var(--h); background: #ffffff0a; transition: height 120ms; }
-  .progress i { position: absolute; left: 0; top: 9px; height: var(--h); background: #fff5; transition: height 120ms, background 120ms; }
+  .progress::before { content: ''; position: absolute; left: 0; right: 0; top: 9px; height: var(--h); background: #ffffff0a; }
+  .progress i { position: absolute; left: 0; top: 9px; height: var(--h); background: #fff5; transition: background 120ms; }
   .progress:hover { --h: 6px; }
   .progress:hover i { background: #fff9; }
+  .bar { height: 68px; font-family: var(--ui-font); }
+  .bar .left { max-width: calc(50% - 110px); }
+  .ctl { position: absolute; left: 50%; transform: translateX(-50%); }
+  .bar .provider { margin-left: auto; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar .key { margin-left: auto; }
+  .bar .provider + .ctl + .key { margin-left: 0; }
+  @media (max-width: 700px) {
+    .bar { height: 88px; align-items: flex-end; padding-bottom: 8px; }
+    .bar .left { position: absolute; top: 7px; left: 16px; height: 30px; max-width: calc(100% - 80px); font-size: 12px; }
+    .bar img { width: 28px; height: 28px; }
+    .bar .meta span { margin-left: 6px; }
+    .ctl { bottom: 5px; }
+    .bar .provider { position: absolute; right: 48px; bottom: 12px; max-width: 70px; font-size: 10px; }
+    .provider small { display: none; }
+    .bar .key { height: 40px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .menu-panel { transform: none; transition: opacity 80ms, visibility 0s 80ms; } .menu-panel.open { transition-delay: 0s; } .bar { transition: opacity 80ms, background 80ms; } }
 </style>
