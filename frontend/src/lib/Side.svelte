@@ -30,7 +30,7 @@
 
 <span class="corner" class:right bind:this={corner}>
   <button class="menu" class:down={open} bind:this={trigger} aria-label={right ? 'Display menu' : 'Library menu'} aria-haspopup="menu" aria-expanded={open}
-    onclick={() => { if (open) close(); else menu = true; }}
+    onclick={async (e) => { if (open) close(); else { menu = true; if (e.detail === 0) { await tick(); focusItem(); } } }}
     onkeydown={(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); menu = true; requestAnimationFrame(() => focusItem(e.key === 'ArrowUp')); } else if (e.key === 'Escape') { e.stopPropagation(); close(); } }}>
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       {#if right}<path d="M4 4h16v6H4zM4 14h6v6H4zM14 14h6v6h-6z" />{:else}<path d="M4 6h16M4 12h16M4 18h16" />{/if}

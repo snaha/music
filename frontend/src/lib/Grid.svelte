@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { keyboardScope } from './keyboard';
   import { untrack } from 'svelte';
   import Icon from './ui/icon.svelte';
   import { reveal } from './ui/motion';
@@ -12,7 +13,6 @@
   import { addCollection, library, MODES, setMode, type Mode, type Tile } from './library.svelte';
   import { spotify, spotifyPlayable, spotifyDimmed, spotifyMessage, spotifyRecoveryLabel, checkSpotify } from './spotify.svelte';
   import { player } from './player.svelte';
-  import { session } from './api.svelte';
   import Side from './Side.svelte';
   import CollectionDetails from './CollectionDetails.svelte';
   import Settings from './Settings.svelte';
@@ -30,7 +30,7 @@
   let art = $state(localStorage.getItem('art') !== '0');
   let motion = $state(localStorage.getItem('motion') === '1'); // off by default
   // which set of controls the top bar shows
-  const SETS = { layout: 'Layout', look: 'Look', search: 'Search', sources: 'Sources' } as const;
+  const SETS = { layout: 'Layout', look: 'Background' } as const;
   const savedSet = localStorage.getItem('set');
   let set = $state<keyof typeof SETS>(savedSet && savedSet in SETS ? savedSet as keyof typeof SETS : 'layout');
   library.source = window.spotify ? (['all', 'local', 'spotify'].includes(localStorage.getItem('library.source') ?? '') ? localStorage.getItem('library.source') as typeof library.source : 'all') : 'all';
@@ -56,7 +56,6 @@
     const tile = candidates[Math.floor(Math.random() * candidates.length)];
     discoveryId = tile.id;
     const index = shown.findIndex(t => t.id === tile.id);
-    autoScroll = true;
     scroller?.scrollTo({ top: Math.floor(index / effectiveCols) * rowStep, behavior: 'instant' });
   }
   let filterHeight = $state(110);
@@ -87,7 +86,7 @@
     }
     return result;
   });
-  function filterChanged() { scrollTop = 0; details = null; player.queueOpen = false; player.view = ''; leftMenu = false; rightMenu = false; scroller?.scrollTo({ top: 0 }); }
+  function filterChanged() { scrollTop = 0; details = null; player.queueOpen = false; player.view = ''; rightMenu = false; scroller?.scrollTo({ top: 0 }); }
   function changeMode(mode: Mode) { artistFilter = ''; favoritesOnly = false; filterChanged(); void setMode(mode); }
   function changeSource() { artistFilter = ''; filterChanged(); }
   function resetFilters() { query = ''; artistFilter = ''; library.source = 'all'; sort = 'library'; favoritesOnly = false; art = false; filterChanged(); }
@@ -97,71 +96,65 @@
   let viewportWidth = $state(innerWidth), viewportHeight = $state(innerHeight), scrollTop = $state(0);
   const pixelGap = $derived(Math.max(0.2, gap * (viewportWidth + (innerWidth - viewportWidth)) / 3312));
   const effectiveCols = $derived(Math.min(cols, Math.max(1, Math.floor(viewportWidth / 140))));
-  const gridInset = $derived(filterHeight + (displayControls ? barHeight : 0));
   const rowStep = $derived(Math.max(1, (viewportWidth - pixelGap * (effectiveCols + 1)) / effectiveCols + pixelGap));
   const totalRows = $derived(Math.ceil(shown.length / effectiveCols));
-  const firstRow = $derived(Math.max(0, Math.min(totalRows, Math.floor((scrollTop - gridInset - pixelGap) / rowStep) - 2)));
-  const lastRow = $derived(Math.min(totalRows, Math.ceil((scrollTop - gridInset + viewportHeight) / rowStep) + 3));
+  const firstRow = $derived(Math.max(0, Math.min(totalRows, Math.floor((scrollTop - pixelGap) / rowStep) - 2)));
+  const lastRow = $derived(Math.min(totalRows, Math.ceil((scrollTop + viewportHeight) / rowStep) + 3));
   const visibleTiles = $derived(shown.slice(firstRow * effectiveCols, lastRow * effectiveCols));
 
-  // when the playing album changes (random queue, next track), bring its cover into view
-  // that scroll is not the user's: on touch it must not show or hide the top bar, so it is ignored until the next touch
-  let scroller: HTMLDivElement, autoScroll = false;
+  let scroller: HTMLDivElement;
   // Playback and background refreshes keep the user's scroll position.
 
   // subtle whole-grid drift with the mouse; native scroll does the rest
   const drift = new Spring({ x: 0, y: 0 }, { stiffness: 0.05, damping: 0.5 });
-  // top bar visibility. Mouse: 0 below the middle of the screen, 1 at the top edge.
-  // Touch: hidden by default; scrolling up shows it, and it stays until scrolling down or tapping an album.
-  // media query first; a real touch event also switches to touch mode in case the query misreports
+  // Both bars follow the app's idle timer. Hover, keyboard focus and open menus keep the top visible.
   const touchAtLoad = matchMedia('(hover: none), (pointer: coarse)').matches;
   let touch = $state(touchAtLoad);
-  let near = $state(touchAtLoad ? 0 : 1);
-  let lastTop = 0;
-  function ontouchstart() { autoScroll = false; if (!touch) { touch = true; near = 0; } }
-  // on touch, a tap while the bars are hidden only brings them back; it must not start a song
+  function ontouchstart() { touch = true; }
+  // The first touch on hidden chrome wakes it without starting playback.
   let wasHidden = false;
-  function pick(t: Tile) { if (touch) near = 0; if (touch && wasHidden) return; onpick(t); }
-  // the drawer view opened from the right menu, if any; it pins the menu open
+  function pick(t: Tile) { if (touch && wasHidden) return; onpick(t); }
   let rightView = $derived(player.viewFrom === 'right' ? player.view : '');
-  // two corner keys with side panels: modes on the left, control sets (and share) on the right.
-  // top bar and side panels are one piece of chrome: same opacity, and hovering any of them lights all
-  let overChrome = $state(false);
-  let leftMenu = $state(false), leftOpen = $state(false), rightMenu = $state(false), rightOpen = $state(false);
-  let panelOpen = $derived(leftOpen || rightOpen);
-  // never fade while the pointer rests on the chrome (touch has no resting pointer, only a stale one), or while a panel is open;
-  // on touch idling never hides it, scrolling does
+  let overBrowse = $state(false), overChrome = $state(false);
+  let rightMenu = $state(false), rightOpen = $state(false);
+  const panelOpen = $derived(rightOpen);
   let controlsFocused = $state(false);
-  let barShown = $derived(displayControls || controlsFocused || !!rightView || overChrome || panelOpen || !((!touch && hidden) || player.queueOpen || (!touch && player.topHidden)));
-  // published sizes so a drawer can fill exactly the space between top bar, side panel and player bar.
-  // on touch the panel never takes space: the drawer spans the full width and the panel opens over it
+  let pointerNearTop = $state(true), pointerObserved = $state(false);
+  const barShown = $derived(controlsFocused || !!rightView || overBrowse || overChrome || panelOpen || (!touch && pointerObserved && pointerNearTop) || (!hidden && !player.topHidden && (touch || pointerNearTop)));
+  // Chrome overlays the wall; these offsets are only for drawers and corner menus.
   $effect(() => { document.documentElement.style.setProperty('--topbar', `${filterHeight + (displayControls ? barHeight : 0)}px`); });
-  $effect(() => { document.documentElement.style.setProperty('--browsebar', `${filterHeight}px`); });
+  $effect(() => { document.documentElement.style.setProperty('--browsebar', `${barShown ? filterHeight : 0}px`); });
   $effect(() => { document.documentElement.style.setProperty('--sidebar', '0px'); });
-  let lit = $derived(overChrome || panelOpen);
-  // a menu item opens its view beside the panel, or closes it when it is the one showing. With a mouse the menu stays open;
-  // on touch it closes so the view gets the whole width
-  function open(view: 'share' | 'settings' | 'components') { player.viewFrom = 'right'; player.view = rightView === view ? '' : view; rightMenu = false; }
-  let chrome = $derived(displayControls || lit || controlsFocused ? 1 : near);
+  function chromeFocus(target: EventTarget | null) {
+    controlsFocused = target instanceof Element && !!target.closest('.browse, .controls, .library-select-menu');
+  }
+  function open(view: 'settings' | 'components') { player.viewFrom = 'right'; player.view = rightView === view ? '' : view; rightMenu = false; }
   function onmove(e: PointerEvent) {
+    if (e.pointerType !== 'touch') {
+      touch = false;
+      pointerObserved = true;
+      pointerNearTop = e.clientY <= (barShown ? filterHeight + (displayControls ? barHeight : 0) : 16);
+    }
     drift.target = motion ? { x: (e.clientX / innerWidth) * 2 - 1, y: (e.clientY / innerHeight) * 2 - 1 } : { x: 0, y: 0 };
-    if (!touch) near = Math.min(1, Math.max(0, 1 - e.clientY / (innerHeight / 2)));
   }
-  function onscroll(e: Event) {
-    const top = (e.currentTarget as HTMLElement).scrollTop; scrollTop = top;
-    if (!touch) return;
-    if (!autoScroll && Math.abs(top - lastTop) > 4) near = top < lastTop ? 1 : 0;
-    lastTop = top;
-  }
+  function onscroll(e: Event) { scrollTop = (e.currentTarget as HTMLElement).scrollTop; }
 </script>
 
-<div class="browse" bind:clientHeight={filterHeight} role="region" aria-label="Library filters">
+<div class="browse" class:hidden={!barShown}
+  onpointerenter={(e) => (overBrowse = e.pointerType === 'mouse')} onpointerleave={() => (overBrowse = false)} bind:clientHeight={filterHeight} role="region" aria-label="Library filters">
   <div class="browse-row">
-    <div class="view-tabs" role="tablist" aria-label="Library views">
-      {#each MODES as mode}<button role="tab" aria-selected={library.mode === mode} onclick={() => changeMode(mode)}>{modeLabels[mode]}</button>{/each}
+    <div class="view-tabs" role="tablist" aria-label="Library views" use:keyboardScope={(e) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+      e.preventDefault(); e.stopPropagation();
+      const buttons = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('button')];
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1 : (index + (e.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus(); buttons[next]?.click();
+    }}>
+      {#each MODES as mode}<button role="tab" tabindex={library.mode === mode ? 0 : -1} aria-selected={library.mode === mode} onclick={() => changeMode(mode)}>{modeLabels[mode]}</button>{/each}
     </div>
     <label class="browse-search"><span class="filter-caption">Search</span>
-      <input type="search" aria-label="Search library" placeholder="Album, artist or playlist…" bind:value={query} oninput={filterChanged} onkeydown={(e) => { if (e.key === 'Escape') { query = ''; filterChanged(); } }} autocomplete="off" spellcheck="false" />
+      <input type="search" aria-label="Search library" placeholder="Album, artist or playlist…" bind:value={query} oninput={filterChanged} onkeydown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); query = ''; filterChanged(); } }} aria-keyshortcuts="/ Control+k Meta+k" autocomplete="off" spellcheck="false" />
     </label>
     <button class="discovery-action" onclick={discover} disabled={!shown.length} title="Find an album in this view"><Icon name="shuffle" /> <span>Surprise me</span></button>
     <button class="filter-toggle" aria-label="Library filters" aria-expanded={filtersOpen} aria-controls="browse-filters" onclick={() => (filtersOpen = !filtersOpen)}><Icon name="filter" /><span>Filters{activeFilters ? ` · ${activeFilters}` : ''}</span></button>
@@ -205,14 +198,23 @@
 </div>
 
 <!-- an image dropped anywhere becomes the custom background -->
-<svelte:window onpointermove={onmove} {ontouchstart} onpointerdowncapture={() => (wasHidden = hidden)}
+<svelte:window onkeydown={e => {
+  if (e.key !== 'Escape' || e.defaultPrevented || player.view || player.queueOpen || player.visOpen) return;
+  if (details) details = null;
+  else if (rightMenu) { rightMenu = false; document.querySelector<HTMLButtonElement>('button[aria-label="Display menu"]')?.focus(); }
+  else if (filtersOpen) { filtersOpen = false; document.querySelector<HTMLButtonElement>('button[aria-label="Library filters"]')?.focus(); }
+  else if (displayControls) { displayControls = false; document.querySelector<HTMLButtonElement>('button[aria-label="Show display controls"]')?.focus(); }
+  else return;
+  e.preventDefault();
+}} onpointermove={onmove} {ontouchstart} onpointerdowncapture={() => (wasHidden = !barShown)}
+  onfocusin={(e) => chromeFocus(e.target)} onfocusout={(e) => chromeFocus(e.relatedTarget)}
   ondragover={(e) => e.preventDefault()} ondrop={(e) => { e.preventDefault(); const f = e.dataTransfer?.files[0]; if (f) importBackground(f); }} />
 
 <!-- the visualizer as background sits behind everything; the fullscreen one replaces it while open -->
 {#if bg.material === 'viz' && !player.visOpen}<Visualizer background />{/if}
 
 <!-- the material sits on the cards' layer so it scrolls and drifts with them, or on the fixed viewport behind them -->
-<div class="scroll" style:padding-top="{gridInset}px" class:fill={!bg.tile} class:m-vinyl={!bg.scroll && bg.material === 'vinyl'} class:m-grille={!bg.scroll && bg.material === 'grille'}
+<div class="scroll" class:fill={!bg.tile} class:m-vinyl={!bg.scroll && bg.material === 'vinyl'} class:m-grille={!bg.scroll && bg.material === 'grille'}
   class:m-fabric={!bg.scroll && bg.material === 'fabric'} class:m-custom={!bg.scroll && (bg.material === 'custom' || bg.material === 'noise')} style:--custom={bg.material === 'noise' ? `url("${noiseBackground}")` : bg.custom ? `url("${bg.custom}")` : 'none'} {onscroll} bind:this={scroller} bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
   <div class="grid" class:m-vinyl={bg.scroll && bg.material === 'vinyl'} class:m-grille={bg.scroll && bg.material === 'grille'}
     class:m-fabric={bg.scroll && bg.material === 'fabric'} class:m-custom={bg.scroll && (bg.material === 'custom' || bg.material === 'noise')} style:--cols={effectiveCols} style:--gap="max(0.2px, calc({gap} * var(--u)))"
@@ -247,17 +249,9 @@
   </div>
 {/if}
 
-<div id="display-controls" class="controls" role="region" tabindex="-1" aria-label="Display options" inert={!displayControls || !barShown} class:hidden={!displayControls || !barShown} style:top="{filterHeight}px" class:lit style:--chrome={chrome} style:pointer-events={displayControls && barShown && chrome > 0.05 ? 'auto' : 'none'}
-  onfocusin={() => (controlsFocused = true)} onfocusout={(e) => { if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) controlsFocused = false; }}
-  bind:clientHeight={barHeight} onpointerenter={() => (overChrome = !touch)} onpointerleave={() => (overChrome = false)}>
-  {#if set === 'sources'}
-    <span class="group" role="radiogroup" aria-label="Music sources">
-      {#each (window.spotify ? ['all', 'local', 'spotify'] : ['all', 'local']) as source}
-        <button class="opt" class:on={library.source === source} role="radio" aria-checked={library.source === source} onclick={() => (library.source = source as typeof library.source)}>{source === 'all' ? 'All' : source === 'local' ? 'Local' : 'Spotify'}</button>
-      {/each}
-    </span>
-    <label><input type="checkbox" bind:checked={library.highlight} /> Highlight sources</label>
-  {:else if set === 'layout'}
+<div id="display-controls" class="controls" role="region" tabindex="-1" aria-label="Display options" inert={!displayControls} class:hidden={!displayControls || !barShown} style:top="{filterHeight}px"
+  bind:clientHeight={barHeight} onpointerenter={(e) => (overChrome = e.pointerType === 'mouse')} onpointerleave={() => (overChrome = false)}>
+  {#if set === 'layout'}
     {#if advancedLayout}
       <label class="slider-control"><span>Columns</span> <Slider type="single" min={1} max={10} step={1} value={cols} onValueChange={(value) => (cols = value)} aria-label="Album columns" /> <output>{cols}</output></label>
       <label class="slider-control"><span>Gap</span> <Slider type="single" min={0} max={160} step={1} value={gap} onValueChange={(value) => (gap = value)} aria-label="Album spacing" /> <output>{gap}</output></label>
@@ -265,16 +259,6 @@
       <label class="grid-size"><span>Grid size</span> <span class="grid-size-track"><Slider type="single" min={1} max={10} step={1} value={11 - cols} onValueChange={resizeGrid} aria-label="Grid size" /></span><span>{effectiveCols} across</span></label>
     {/if}
     <Button variant="outline" size="sm" aria-pressed={advancedLayout} onclick={() => (advancedLayout = !advancedLayout)}>{advancedLayout ? 'Simple' : 'Advanced'}</Button>
-  {:else if set === 'search'}
-    <span class="find">
-      <input type="text" placeholder="Search library…" bind:value={query} spellcheck="false" autocomplete="off" aria-label="Search"
-        onkeydown={(e) => { if (e.key === 'Escape') query = ''; }} />
-      {#if query}
-        <button class="clear" onclick={() => (query = '')} aria-label="Clear search">
-          <svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-        </button>
-      {/if}
-    </span>
   {:else}
     <span class="group" role="radiogroup" aria-label="Background">
       <span class="name">Background</span>
@@ -284,24 +268,14 @@
       {/each}
       <button class="opt" onclick={randomBackground} title="one of the bundled sample backgrounds">Random</button>
     </span>
+    <label><input type="checkbox" bind:checked={library.highlight} /> Highlight sources</label>
   {/if}
-  <!-- left corner: which part of the library the grid shows -->
-  <Side side="left" label={modeLabels[library.mode]} {touch} bind:menu={leftMenu} bind:open={leftOpen}>
-    {#each MODES as m (m)}
-      <button role="menuitem" tabindex={leftOpen ? 0 : -1} class:on={library.mode === m} onclick={() => { changeMode(m); leftMenu = false; }}>{modeLabels[m]}</button>
-    {/each}
-  </Side>
-  <!-- right corner: which set of controls the bar shows, and the share and settings views -->
-  <Side side="right" label={SETS[set]} {touch} pinned={false} onunpin={() => (player.view = '')} bind:menu={rightMenu} bind:open={rightOpen}>
+  <Side side="right" label={SETS[set]} {touch} bind:menu={rightMenu} bind:open={rightOpen}>
     {#each Object.entries(SETS) as [key, label] (key)}
-      <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={set === key} onclick={() => { set = key as keyof typeof SETS; player.view = ''; rightMenu = false; }}>{label}</button>
+      <button role="menuitemradio" aria-checked={set === key} aria-label={label} tabindex={rightOpen ? 0 : -1} class:on={set === key} onclick={() => { set = key as keyof typeof SETS; player.view = ''; rightMenu = false; }}>{label}</button>
     {/each}
-    <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={rightView === 'components'} onclick={() => open('components')}>Components</button>
     <span class="rule"></span>
-    {#if session.admin}
-      <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={rightView === 'share'} onclick={() => open('share')}>Share</button>
-    {/if}
-    <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={rightView === 'settings'} onclick={() => open('settings')}>Settings</button>
+    <button role="menuitem" aria-label="Control style" tabindex={rightOpen ? 0 : -1} class:on={rightView === 'components'} onclick={() => open('components')}>Control style</button>
   </Side>
 </div>
 
@@ -356,7 +330,8 @@
     .compact-filter { grid-row: 3; }
     .filter-actions { grid-column: 3; grid-row: 1; justify-content: flex-end; }
     .filter-actions:empty { display: none; }
-    .browse button { min-height: 36px; }
+    .browse button { min-height: 44px; }
+    .view-actions :global([data-slot=button]), .filter-actions :global([data-slot=button]) { width: 44px; height: 44px; }
   }
 
   .browse { padding: 14px 20px; background: var(--ui-surface); }
@@ -473,10 +448,11 @@
     display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 16px 28px;
     padding: 16px 180px; color: var(--ui-text); background: var(--ui-surface);
     font: 13px/1.4 system-ui, sans-serif; user-select: none; z-index: 2;
-    opacity: var(--chrome, 1);
-    transition: opacity 180ms ease-out;
+    opacity: 1;
   }
-  .controls.hidden { opacity: 0; pointer-events: none; }
+  .browse, .controls { transition: opacity 600ms ease; }
+  .browse.hidden, .controls.hidden { opacity: 0; pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) { .browse, .controls { transition: opacity 120ms ease; } }
   .controls :is(button, input):focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 4px; }
   /* scan progress while navidrome indexes the folder (first run, new files) */
   .scan { position: fixed; left: 50%; bottom: 130px; transform: translateX(-50%); padding: 8px 16px; border-radius: 4px;
@@ -495,11 +471,6 @@
   .controls .opt:hover { background: var(--ui-muted); color: var(--ui-text); }
   .controls .opt:disabled { color: #787880; cursor: default; background: transparent; }
   .controls .opt.on { background: var(--ui-accent); color: #111; }
-  .find { position: relative; display: flex; align-items: center; width: min(100%, 420px); }
-  .controls input[type=text] { box-sizing: border-box; width: 100%; min-height: 40px; padding: 8px 40px 8px 12px; border: 1px solid #ffffff26; border-radius: 6px; background: #ffffff08; color: var(--ui-text); caret-color: var(--ui-accent); font: inherit; }
-  .controls input[type=text]::placeholder { color: #aaaab3; }
-  .controls .clear { cursor: pointer; position: absolute; right: 0; display: grid; place-items: center; width: 40px; height: 40px; background: transparent; border: 0; border-radius: 6px; color: var(--ui-text); }
-  .controls .clear:hover { color: var(--ui-text); background: var(--ui-muted); }
   .controls input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--ui-accent); cursor: pointer; }
   @media (max-width: 1100px) { .controls { padding: 72px 24px 16px; } }
   @media (max-width: 700px) {

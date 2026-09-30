@@ -1,9 +1,20 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { session } from './api.svelte';
   import { jumpRandom, next, prev, player, seek, setOrder, toggle, type Order } from './player.svelte';
   import { spotify } from './spotify.svelte';
   import { grid } from './library.svelte';
   import Queue from './Queue.svelte';
+  import { artworkPalette, fallbackPalette } from './artwork-palette';
+  let palette = $state(fallbackPalette);
+  const playingCover = $derived(player.song?.cover ?? '');
+  $effect(() => {
+    const cover = playingCover;
+    let active = true;
+    if (!cover) palette = fallbackPalette;
+    artworkPalette(cover).then(value => { if (active) palette = value; });
+    return () => { active = false; };
+  });
   import Share from './Share.svelte';
   let { hidden }: { hidden: boolean } = $props();
   // publish the bar height so the song list can pad for it
@@ -15,6 +26,21 @@
   const ORDERS: Record<Order, string> = { normal: 'In order', shuffle: 'Shuffle queue', random: 'Random from the grid' };
   // the bottom-right menu: share, visualizer and play order. It stays open until closed like the song list
   let menu = $state(false), key = $state<HTMLElement>(), panel = $state<HTMLElement>();
+  function focusMenu(last = false) {
+    const items = panel?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
+    (last ? items?.[items.length - 1] : items?.[0])?.focus();
+  }
+  async function openMenu(last = false) { menu = true; await tick(); focusMenu(last); }
+  function menuKeys(e: KeyboardEvent) {
+    const items = [...panel!.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); menu = false; key?.focus(); }
+    else if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+      e.preventDefault(); e.stopPropagation();
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (index + (['ArrowDown', 'ArrowRight'].includes(e.key) ? 1 : -1) + items.length) % items.length;
+      items[next]?.focus();
+    } else if (e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); menu = false; document.querySelector<HTMLElement>(e.shiftKey ? '.bar .btns button:last-child' : '.bar .progress')?.focus(); }
+  }
   // hot corners: the pointer pushed into a bottom screen corner opens what that corner holds, which then stays until closed:
   // the song list on the left (only with a song loaded, like the button it stands in for), the menu on the right.
   // mouse only, and only while the bar shows
@@ -39,12 +65,14 @@
 <svelte:document onmouseleave={(e) => openCorner(atCorner(e, 24))} />
 
 {#if session.api}
-  {#if player.queueOpen}<Queue onclose={() => (player.queueOpen = false)} />{/if}
+  <div class="playback-world" style={palette}>
+  {#if player.queueOpen}<Queue {palette} onclose={() => (player.queueOpen = false)} />{/if}
   {#if player.view === 'share'}<Share from={player.viewFrom} onclose={() => (player.view = '')} />{/if}
-  <div class="menu-panel" class:open={menu} role="menu" aria-hidden={!menu} bind:this={panel}>
+  <div class="menu-panel" class:open={menu} role="menu" aria-label="Playback options" aria-hidden={!menu} inert={!menu} bind:this={panel} onkeydown={menuKeys}>
     {#if session.admin}<button role="menuitem" tabindex={menu ? 0 : -1} class:on={player.view === 'share'} onclick={share}>Share</button>{/if}
     <button role="menuitem" tabindex={menu ? 0 : -1} onclick={visualize}>Visualizer</button>
-    <button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => { player.queueOpen = !player.queueOpen; menu = false; }}>Queue ({player.queue.length})</button>
+    {#if !player.song}<button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => { player.queueOpen = !player.queueOpen; menu = false; }}>Queue ({player.queue.length})</button>{/if}
+    <button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => { player.shortcutsOpen = true; menu = false; }}>Keyboard shortcuts <span aria-hidden="true">?</span></button>
     <span class="rule"></span>
     <!-- stays open after a jump, so it can be pressed again right away -->
     <button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => jumpRandom(grid)}>Shuffle</button>
@@ -70,9 +98,9 @@
   <div class="bar" class:hidden={hidden && !player.queueOpen && !player.view && !menu && !player.pending && !player.error} class:lit={player.queueOpen || !!player.view || menu} bind:clientHeight={barHeight}>
     {#if player.song}
       <!-- cover + title + artist: one control that opens the song list -->
-      <button class="left" onclick={() => (player.queueOpen = !player.queueOpen)} aria-label="Show songs" aria-expanded={player.queueOpen}>
+      <button class="left" onclick={() => (player.queueOpen = !player.queueOpen)} aria-label="Show songs" aria-keyshortcuts="q" aria-expanded={player.queueOpen}>
         <img src={player.song.cover} alt="" />
-        <span class="meta"><b>{player.song.title}</b> <span>{player.song.artist}</span></span>
+        <span class="meta"><b>{player.song.title}</b> <span>{player.song.artist}{#if player.song.album} · {player.song.album}{/if}</span></span>
       </button>
     {:else}
       <span class="left"></span>
@@ -80,21 +108,22 @@
     {#if player.song?.source === 'spotify'}<button class="provider" onclick={() => window.spotify!.external(player.song!.externalUrl!).catch((e) => (player.error = e.message))}>Spotify ↗<small>{spotify.deviceName}</small></button>{/if}
     <span class="ctl">
       <span class="btns">
-        <button onclick={prev} disabled={!player.song} aria-label="Previous track">‹</button>
-        <button onclick={toggle} disabled={!player.queue.length} aria-label={player.playing || player.pending ? 'Pause' : 'Play'}>{player.pending ? '…' : player.playing ? '❚❚' : '▶'}</button>
-        <button onclick={next} disabled={!player.song} aria-label="Next track">›</button>
+        <button onclick={prev} disabled={!player.song} aria-label="Previous track" aria-keyshortcuts="ArrowLeft"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M5 5h2v14H5zM19 5v14L8 12z" /></svg></button>
+        <button onclick={toggle} disabled={!player.queue.length} aria-label={player.playing || player.pending ? 'Pause' : 'Play'}><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">{#if player.pending}<circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="24 20" />{:else if player.playing}<path d="M7 5h4v14H7zM14 5h4v14h-4z" />{:else}<path d="m8 4 13 8-13 8z" />{/if}</svg></button>
+        <button onclick={next} disabled={!player.song} aria-label="Next track" aria-keyshortcuts="ArrowRight"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M17 5h2v14h-2zM5 5l11 7-11 7z" /></svg></button>
       </span>
       <span class="time">{fmt(player.time)} / {fmt(player.duration)}</span>
     </span>
     <!-- reaches the screen edge so a click in the corner itself opens the menu, like the song list on the left -->
-    <button class="key" class:down={menu} bind:this={key} onclick={() => (menu = !menu)} aria-haspopup="menu" aria-expanded={menu} aria-label="Menu">
+    <button class="key" class:down={menu} bind:this={key} onclick={() => { if (menu) menu = false; else void openMenu(); }} onkeydown={e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); void openMenu(e.key === 'ArrowUp'); } else if (e.key === 'Escape' && menu) { e.preventDefault(); e.stopPropagation(); menu = false; } }} aria-haspopup="menu" aria-expanded={menu} aria-label="Menu">
       <svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
     </button>
-    <div class="progress" role="slider" tabindex="0" aria-label="Seek" aria-valuemin={0} aria-valuemax={player.duration || 0} aria-valuenow={player.time}
-      onclick={(e) => seek(e.offsetX / e.currentTarget.clientWidth)}
-      onkeydown={(e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); seek((player.time + (e.key === 'ArrowLeft' ? -10 : 10)) / player.duration); } }}>
+    <div class="progress" role="slider" tabindex="0" aria-label="Seek" aria-valuemin={0} aria-valuemax={player.duration || 0} aria-valuenow={Math.min(player.time, player.duration || 0)} aria-valuetext={`${fmt(player.time)} of ${fmt(player.duration)}`}
+      onclick={(e) => { const bounds = e.currentTarget.getBoundingClientRect(); seek((e.clientX - bounds.left) / bounds.width); }}
+      onkeydown={(e) => { if (!player.duration || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return; e.preventDefault(); e.stopPropagation(); seek(e.key === 'Home' ? 0 : e.key === 'End' ? 1 : (player.time + (e.key === 'ArrowLeft' ? -10 : 10)) / player.duration); }}>
       <i style:width="{player.duration ? (player.time / player.duration) * 100 : 0}%"></i>
     </div>
+  </div>
   </div>
 {/if}
 
@@ -124,7 +153,7 @@
   .bar button.left:active { background: rgba(255, 255, 255, 0.03); opacity: .8; }
   .bar img { width: calc(56 * var(--s)); height: calc(56 * var(--s)); object-fit: cover; opacity: .95; flex-shrink: 0; }
   .meta { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .meta b { font-weight: 500; color: #fff; }
+  .meta b { font-weight: 600; color: var(--play-text); }
   .meta span { opacity: .7; margin-left: 8px; }
   .bar button { all: unset; cursor: pointer; font-size: calc(20 * var(--s)); padding: 4px 12px; opacity: .9; }
   .bar button:disabled { opacity: .3; cursor: default; }
@@ -170,21 +199,43 @@
   .progress i { position: absolute; left: 0; top: 9px; height: var(--h); background: #fff5; transition: background 120ms; }
   .progress:hover { --h: 6px; }
   .progress:hover i { background: #fff9; }
-  .bar { height: 68px; font-family: var(--ui-font); }
-  .bar .left { max-width: calc(50% - 110px); }
-  .ctl { position: absolute; left: 50%; transform: translateX(-50%); }
-  .bar .provider { margin-left: auto; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bar .key { margin-left: auto; }
+  .playback-world { color: var(--play-text); font-family: var(--ui-font); }
+  .bar { height: 76px; box-sizing: content-box; background: var(--play-bar); color: var(--play-text); font: 14px/1.4 var(--ui-font); transition: opacity 600ms, background-color 300ms ease-out, color 300ms ease-out; }
+  .bar:hover, .bar.lit { background: var(--play-bar); }
+  .bar .left { max-width: calc(50% - 120px); font-size: 14px; gap: 12px; }
+  .bar img { width: 52px; height: 52px; border-radius: 3px; opacity: 1; }
+  .meta { display: flex; flex-direction: column; gap: 3px; }
+  .meta b, .meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta span { margin: 0; opacity: 1; color: var(--play-muted); font-size: 12px; }
+  .ctl { position: absolute; left: 50%; transform: translateX(-50%); gap: 2px; }
+  .bar .btns button { display: grid; place-items: center; width: 44px; height: 40px; box-sizing: border-box; padding: 0; border-radius: 6px; }
+  .bar .btns button:hover { background: var(--play-line); }
+  .bar .btns button:nth-child(2) { color: var(--play-bar); background: var(--play-accent); }
+  .time { color: var(--play-muted); opacity: 1; font-size: 11px; }
+  .bar .provider { margin-left: auto; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .bar .key { margin-left: auto; min-width: 44px; justify-content: center; padding: 0 12px; }
   .bar .provider + .ctl + .key { margin-left: 0; }
+  .bar button:focus-visible, .progress:focus-visible { outline: 2px solid var(--play-accent); outline-offset: -3px; }
+  .bar:focus-within { opacity: 1; pointer-events: auto; }
+  .progress::before { background: var(--play-line); }
+  .progress i, .progress:hover i { background: var(--play-accent); }
+  .menu-panel { width: 250px; padding: 12px; gap: 4px; background: var(--play-bar); color: var(--play-text); font: 14px/1.4 var(--ui-font); letter-spacing: 0; text-transform: none; }
+  .menu-panel button { min-height: 44px; box-sizing: border-box; padding: 10px 12px; opacity: 1; }
+  .menu-panel button:focus-visible { outline: 2px solid var(--play-accent); outline-offset: -2px; }
+  .menu-panel button:hover, .menu-panel button.on { background: var(--play-line); }
+  .rule { background: var(--play-line); margin: 8px 12px; }
+  .menu-panel .orders button.on { background: var(--play-accent); color: var(--play-bar); border-color: var(--play-accent); }
   @media (max-width: 700px) {
-    .bar { height: 88px; align-items: flex-end; padding-bottom: 8px; }
-    .bar .left { position: absolute; top: 7px; left: 16px; height: 30px; max-width: calc(100% - 80px); font-size: 12px; }
-    .bar img { width: 28px; height: 28px; }
-    .bar .meta span { margin-left: 6px; }
-    .ctl { bottom: 5px; }
-    .bar .provider { position: absolute; right: 48px; bottom: 12px; max-width: 70px; font-size: 10px; }
-    .provider small { display: none; }
-    .bar .key { height: 40px; }
+    .bar { height: 112px; padding: 0 12px; padding-bottom: env(safe-area-inset-bottom, 0px); }
+    .bar .left { position: absolute; top: 8px; left: 12px; height: 48px; max-width: calc(100% - 64px); padding: 0; margin: 0; font-size: 13px; }
+    .bar img { width: 44px; height: 44px; }
+    .bar .meta span { margin: 0; }
+    .ctl { bottom: 8px; flex-direction: row; gap: 14px; }
+    .bar .btns button { height: 44px; }
+    .bar .provider { display: none; }
+    .bar .key { position: absolute; right: 8px; top: 8px; height: 44px; margin: 0; padding: 0; }
+    .menu-panel { width: min(280px, 90vw); font-size: 14px; gap: 4px; }
+    .menu-panel button { padding: 10px 12px; }
   }
   @media (prefers-reduced-motion: reduce) { .menu-panel { transform: none; transition: opacity 80ms, visibility 0s 80ms; } .menu-panel.open { transition-delay: 0s; } .bar { transition: opacity 80ms, background 80ms; } }
 </style>

@@ -1,16 +1,24 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { player } from './player.svelte';
+  import { keyboardScope } from './keyboard';
+  import { onMount, type Snippet } from 'svelte';
   import { reveal } from './ui/motion';
 
   // a translucent layer over the grid, closed with a chevron.
   // 'bottom': rises from the player bar and leaves it visible
   // 'right': slides in from the right and fills exactly the space between top bar, side panel and player bar
   let { from = 'bottom', onclose, children }: { from?: 'bottom' | 'right'; onclose: () => void; children: Snippet } = $props();
+  let handle: HTMLButtonElement;
+  onMount(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    handle.focus({ preventScroll: true });
+    return () => { if (previous?.isConnected && (document.activeElement === document.body || handle.closest('.panel')?.contains(document.activeElement))) previous.focus({ preventScroll: true }); };
+  });
 </script>
 
-<div class="panel" class:right={from === 'right'} in:reveal={from === 'right' ? { x: 32, duration: 260 } : { y: 24, duration: 260 }} out:reveal={from === 'right' ? { x: 16, duration: 140 } : { y: 12, duration: 140 }}>
+<div role="region" aria-label="Details panel" use:keyboardScope={event => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); if (player.shortcutsOpen) player.shortcutsOpen = false; else onclose(); } }} class="panel" class:right={from === 'right'} in:reveal={from === 'right' ? { x: 32, duration: 260 } : { y: 24, duration: 260 }} out:reveal={from === 'right' ? { x: 16, duration: 140 } : { y: 12, duration: 140 }}>
   <!-- the whole strip along the edge closes the drawer; the chevron sits centred in it -->
-  <button class="handle" onclick={onclose} aria-label={from === 'right' ? 'Back' : 'Close'}><span>{from === 'right' ? '›' : '⌄'}</span></button>
+  <button bind:this={handle} class="handle" onclick={onclose} aria-label={from === 'right' ? 'Back' : 'Close'}><span>{from === 'right' ? '›' : '⌄'}</span></button>
   {@render children()}
 </div>
 

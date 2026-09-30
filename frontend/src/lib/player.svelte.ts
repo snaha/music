@@ -9,7 +9,7 @@ export type Order = 'normal' | 'shuffle' | 'random';
 export type Grid = { count: number; key: string; find(albumId: string): number; song(n: number): Promise<Track | undefined> };
 export const player = $state({
   queue: [] as Track[], index: -1, blockedIndex: -1, playing: false, pending: false, requesting: false, requestRevision: 0, suspended: false, error: '',
-  time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, topHidden: false, visOpen: false,
+  time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, shortcutsOpen: false, topHidden: false, visOpen: false,
   view: '' as '' | 'share' | 'settings' | 'components', viewFrom: 'bottom' as 'bottom' | 'right',
   get song() { return this.queue[this.index] as Track | undefined; },
 });
