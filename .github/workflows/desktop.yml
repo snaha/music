@@ -1,6 +1,7 @@
 name: desktop
 on:
   workflow_dispatch:
+  pull_request:   # preview builds, attached to the run
   push:
     tags: ['v*']
 permissions:
