@@ -11,6 +11,10 @@ const run = (...command) => {
   const env = { ...process.env };
   if (started) delete env.AGENT_BROWSER_EXECUTABLE_PATH;
   started = true;
+  if (['click', 'focus'].includes(command[0]) && ['Library', 'Library filters', 'Layout', 'Background', 'Theme', 'Settings'].some(label => command[1] === `button[aria-label="${label}"]`)) {
+    const expanded = execFileSync(cli, [...args, 'eval', 'document.querySelector(".bar-modes > button").getAttribute("aria-expanded")'], { encoding: 'utf8', timeout: 30000, env }).trim();
+    if (!expanded.includes('true')) execFileSync(cli, [...args, 'click', 'button[aria-label="Choose toolbar mode"]'], { encoding: 'utf8', timeout: 30000, env });
+  }
   return execFileSync(cli, [...args, ...command], { encoding: 'utf8', timeout: 30000, env });
 };
 const evaluate = code => run('eval', code);
@@ -109,11 +113,21 @@ try {
     run('press', 'Escape');
     assert(`document.activeElement.getAttribute('aria-label')==='Menu'`, 'Playback menu Escape must restore its trigger focus');
     const commandsBeforeDiscovery = run('eval', 'window.__auditCommands.length').trim();
-    run('mouse', 'move', String(width / 2), '4');
-    run('wait', '650');
+    run('mouse', 'move', String(width / 2), '35');
+    run('wait', '350');
+    assert(`!document.querySelector('.browse').classList.contains('hidden')`, 'Approaching the top edge must reveal the toolbar before reaching the edge');
     run('click', '.discovery-action');
     assert(`document.querySelector('.discovered') !== null && window.__auditCommands.length === ${commandsBeforeDiscovery}`, 'Discovery must reveal a cover without starting playback');
 
+    assert(`Math.abs((document.querySelector('.bar-content').getBoundingClientRect().left + document.querySelector('.bar-content').getBoundingClientRect().right) / 2 - innerWidth / 2)<1`, 'Active controls must stay centered');
+    run('click', button('Choose toolbar mode'));
+    assert(`document.querySelector('[aria-label="Choose toolbar mode"]').getAttribute('aria-expanded')==='true' && document.querySelector('.bar-content').hidden`, 'Selector must replace current controls');
+    assert(`document.querySelector('.browse').getBoundingClientRect().height<=80`, 'Open selector must occupy one row at every screen size');
+    assert(`document.querySelector('.mode-options').getBoundingClientRect().right < document.querySelector('[aria-label="Choose toolbar mode"]').getBoundingClientRect().left`, 'Mode choices must expand to the left of the button');
+    run('mouse', 'move', String(width / 2), String(height / 2));
+    run('wait', '3200');
+    assert(`!document.querySelector('.browse').classList.contains('hidden')`, 'Open selector must pin the toolbar after pointer departure');
+    run('click', button('Choose toolbar mode'));
     assert(`!document.querySelector('[aria-label="Filter by artist"]')`, 'Secondary filters must be hidden initially');
     run('click', button('Library filters'));
     run('fill', '[aria-label="Filter by artist"]', 'zzzz-no-artist');
@@ -137,7 +151,7 @@ try {
     assert(`document.querySelector('.body > section.advanced details').open`, 'Advanced settings must be reachable');
     assert(`document.documentElement.scrollWidth<=innerWidth`, 'Settings must fit the window');
     run('click', button('Settings'));
-    run('click', button('Show display controls'));
+    run('click', button('Layout'));
     run('click', '.controls button[aria-pressed]');
     run('focus', '[aria-label="Album columns"] [role="slider"]');
     run('press', 'ArrowRight');
@@ -145,31 +159,30 @@ try {
     run('press', 'ArrowLeft');
     capture(size, 'advanced-layout');
     run('click', '.controls button[aria-pressed]');
-    run('hover', button('Display menu'));
-    assert(`document.querySelector(${JSON.stringify(button('Display menu'))}).getAttribute('aria-expanded')==='false'`, 'Menu must not open on hover');
-    run('mouse', 'move', String(width / 2), '4');
-    run('wait', '650');
-    run('click', button('Display menu'));
-    run('wait', '250');
-    capture(size, 'display-menu');
-    assert(`Array.from(document.querySelectorAll('.side [role^=menuitem]')).map(e=>e.textContent.trim()).join('|')==='Layout|Background|Control style'`, 'Display menu must contain only appearance actions');
-    assert(`!document.querySelector('[aria-label="Library menu"]') && document.querySelectorAll('[role=tablist][aria-label="Library views"]').length===1`, 'Library navigation must have a single home');
-    assert(`document.querySelectorAll('.browse [aria-label="Search library"]').length===1 && !document.querySelector('.controls input[type=text]')`, 'Search must have a single home');
-    run('click', '[role=menuitem][aria-label="Control style"]');
-    run('wait', '200');
-    for (const [index, style] of [[1,'classic'],[3,'neon'],[2,'studio']]) {
+    assert(`!document.querySelector('.side') && !document.querySelector('.component-panel')`, 'Toolbar modes must replace stacked display menus and the theme drawer');
+    run('click', button('Background'));
+    assert(`!!document.querySelector('[role="radiogroup"][aria-label="Background"]') && !document.querySelector('[aria-label="Grid size"]')`, 'Background must replace layout in the same toolbar');
+    assert(`document.querySelector('.bar-modes').getBoundingClientRect().right<=innerWidth && document.querySelector('.controls .group').getBoundingClientRect().right<=innerWidth`, 'Background mode must keep its toolbar and material strip within the viewport');
+    capture(size, 'background-mode');
+    run('click', button('Theme'));
+    assert(`document.querySelectorAll('.browse [aria-label="Search library"]').length===1`, 'Search must have a single home');
+    const scrollBeforeTheme = run('eval', 'document.querySelector(".scroll").scrollTop').trim();
+    const iconSizes = [];
+    for (const [index, style] of [[1,'classic'],[3,'neon'],[4,'coss'],[2,'studio']]) {
       run('click', `.style-card:nth-of-type(${index})`);
-      assert(`document.documentElement.dataset.components===${JSON.stringify(style)}`, 'Component style must apply');
+      assert(`document.documentElement.dataset.components===${JSON.stringify(style)}`, 'Theme must apply');
+      assert(`document.querySelector('.scroll').scrollTop === ${scrollBeforeTheme}`, 'Theme selection must preserve wall position');
+      iconSizes.push(run('eval', 'JSON.stringify([document.querySelector("button[aria-label=Settings] svg").getBoundingClientRect().width,document.querySelector("button[aria-label=Settings] svg").getBoundingClientRect().height])').trim());
       capture(size, `components-${style}`);
     }
-    run('click', button('Close component styles'));
-    run('mouse', 'move', String(width / 2), '4');
-    run('wait', '650');
-    run('click', button('Display menu'));
-    run('press', 'ArrowDown');
+    if (new Set(iconSizes).size !== 1) throw new Error('Settings icons must be the same size in every theme');
+    run('click', button('Back to toolbar selector'));
+    assert(`document.querySelector('.bar-content').hidden && document.querySelector('[aria-label="Choose toolbar mode"]').getAttribute('aria-expanded')==='true'`, 'Back must restore the selector in the same row');
+    run('click', button('Theme'));
+    evaluate('document.activeElement?.blur()');
+    run('press', '/');
+    assert(`document.activeElement.getAttribute('aria-label')==='Search library' && !document.querySelector('.browse-row').hidden`, 'Search shortcut must return from Theme and focus the library search');
     run('press', 'Escape');
-    assert(`document.activeElement.getAttribute('aria-label')==='Display menu'`, 'Escape must return focus to menu trigger');
-    run('click', button('Show display controls'));
     evaluate('document.activeElement?.blur()');
     run('mouse', 'move', String(width / 2), String(height / 2));
     run('wait', '3200');
@@ -203,6 +216,22 @@ try {
     run('mouse', 'move', String(width / 2), String(height / 2));
     run('wait', '3200');
     assert(`getComputedStyle(document.querySelector('.browse')).opacity==='1'`, 'Focused search must remain visible while idle');
+    evaluate('document.activeElement?.blur()');
+    run('wait', '3200');
+    evaluate('document.querySelector(".scroll").scrollTop=0');
+    run('wait', '300');
+    assert(`!document.querySelector('.browse').classList.contains('hidden')`, 'Scrolling back to the top must reveal the toolbar');
+    run('wait', '2100');
+    assert(`document.querySelector('.browse').classList.contains('hidden')`, 'Scroll reveal must settle back to the unobstructed wall');
+    run('mouse', 'move', String(width / 2), '35');
+    run('wait', '350');
+    run('focus', button('Library'));
+    run('press', 'ArrowRight');
+    assert(`document.activeElement.getAttribute('aria-label')==='Library filters'`, 'Arrow keys must navigate toolbar modes rather than skip a song');
+    run('press', 'Enter');
+    assert(`!!document.querySelector('[aria-label="Filter by artist"]')`, 'Keyboard must activate toolbar modes');
+    run('press', 'Escape');
+    run('press', 'Escape');
     results.push({ size, status: 'passed' });
     console.log(`${size}: passed`);
   }

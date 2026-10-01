@@ -7,7 +7,8 @@ Slider uses Bits UI for keyboard, pointer, touch and ARIA behavior. Button retai
 shadcn's variant API. Styles live in src/components.css, avoiding a global Tailwind
 reset on the existing cover wall.
 
-Display menu → Components switches persisted device-local Classic, Studio and Neon styles.
+Toolbar → Theme switches persisted device-local Classic, Studio, Neon and Coss themes. Library, Filters, Layout, Background and Theme share one toolbar surface; Settings retains its drawer.
+Opening the top-right selector replaces the active controls in one row. Choosing a mode restores its controls; Back returns to the selector. The selector and non-library modes pin the toolbar. Narrow screens scroll choices and controls horizontally.
 These are styles of the same components, not separately installed UI libraries.
 The default is Studio; switching changes presentation only.
 

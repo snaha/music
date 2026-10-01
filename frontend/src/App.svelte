@@ -5,6 +5,7 @@
   import { next, player, prev, toggle } from './lib/player.svelte';
   import Bar from './lib/Bar.svelte';
   import Login from './lib/Login.svelte';
+  import { toolbar } from './lib/ui-style.svelte';
   import Grid from './lib/Grid.svelte';
   import Visualizer from './lib/Visualizer.svelte';
   import { initSpotify, spotify } from './lib/spotify.svelte';
@@ -31,6 +32,7 @@
   async function focusSearch() {
     searchReturn = document.activeElement as HTMLElement;
     player.view = ''; player.queueOpen = false; player.shortcutsOpen = false; wake();
+    toolbar.mode = 'library'; toolbar.selecting = false;
     await tick();
     const input = document.querySelector<HTMLInputElement>('[aria-label="Search library"]');
     input?.focus({ preventScroll: true }); input?.select();
