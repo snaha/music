@@ -4,7 +4,7 @@ import { spotify, spotifyPlayable, spotifyMessage } from './spotify.svelte';
 import { PlaybackController, type PlaybackAdapter } from './playback-controller';
 import { confirmSpotify, interpretRemote, settleRemoteObservation, type RemoteObservation } from './spotify-playback';
 import { shuffle } from './shuffle';
-import type { Track } from './music';
+import type { Track, Collection, SpotifyPlayback } from './music';
 import { recordHistory, saveHistory, historyTrack, type ListeningContext, type HistoryEntry } from './listening-history.svelte';
 
 export type Order = 'normal' | 'shuffle' | 'random';
@@ -12,11 +12,15 @@ export type Grid = { count: number; key: string; find(albumId: string): number; 
 export const player = $state({
   queue: [] as Track[], index: -1, blockedIndex: -1, playing: false, pending: false, requesting: false, requestRevision: 0, suspended: false, error: '',
   time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, queueTab: 'queue' as 'queue' | 'history', shortcutsOpen: false, topHidden: false, visOpen: false,
+  loadingCollectionId: '', volume: 100, remoteVolume: 100, remoteVolumeSupported: false,
   view: '' as '' | 'share' | 'settings', viewFrom: 'bottom' as 'bottom' | 'right',
   get song() { return this.queue[this.index] as Track | undefined; },
 });
 
 const audio = new Audio(), warmAudio = new Audio();
+const savedVolume = Number(localStorage.getItem('music.volume') ?? 100);
+player.volume = Number.isFinite(savedVolume) ? Math.max(0, Math.min(100, savedVolume)) : 100;
+audio.volume = player.volume / 100;
 audio.crossOrigin = warmAudio.crossOrigin = 'anonymous';
 audio.preload = 'auto'; warmAudio.preload = 'metadata';
 let localTrack: Track | undefined, scrobbled = false;
@@ -61,7 +65,7 @@ const remoteAdapter: PlaybackAdapter = {
   async start(track) {
     await window.spotify!.command('play', track.uri);
     const state = await confirmSpotify((s) => !!s && s.deviceId === spotify.deviceId && s.track?.id === track.id && s.playing && !s.shuffle && s.repeat === 'off');
-    if (state) rememberRemote(track, state.progress, true);
+    if (state) { rememberRemote(track, state.progress, true); observeVolume(state); }
   },
   async pause() {
     const before = await window.spotify!.playback();
@@ -74,7 +78,7 @@ const remoteAdapter: PlaybackAdapter = {
   async resume() {
     await window.spotify!.command('resume');
     const state = await confirmSpotify((s) => !!s && s.deviceId === spotify.deviceId && s.track?.id === player.song?.id && s.playing);
-    if (state && player.song) rememberRemote(player.song, state.progress, true);
+    if (state && player.song) { rememberRemote(player.song, state.progress, true); observeVolume(state); }
   },
   async seek(seconds) { await window.spotify!.command('seek', seconds); remoteProgress = seconds; remoteSampleAt = performance.now(); lastRemote = undefined; },
 };
@@ -93,6 +97,42 @@ function metadata(track: Track) {
 function rememberRemote(track: Track, progress: number, isPlaying: boolean) {
   remoteProgress = progress; remoteSampleAt = performance.now();
   lastRemote = { trackId: track.id, progress, duration: track.duration ?? 0, at: Date.now(), playing: isPlaying };
+}
+function observeVolume(state: SpotifyPlayback) {
+  player.remoteVolumeSupported = state.supportsVolume === true;
+  if (volumeTimer || volumeSending) return;
+  if (Number.isFinite(state.volume)) player.remoteVolume = Math.max(0, Math.min(100, state.volume!));
+}
+let volumeTimer: ReturnType<typeof setTimeout> | undefined;
+let volumeSending = false, volumeRevision = 0;
+let volumeTail: Promise<void> = Promise.resolve();
+export function setVolume(value: number) {
+  if (!Number.isFinite(value)) return;
+  const volume = Math.max(0, Math.min(100, Math.round(value)));
+  if (player.song?.source !== 'spotify') {
+    player.volume = volume; audio.volume = volume / 100;
+    try { localStorage.setItem('music.volume', String(volume)); } catch {}
+    return;
+  }
+  if (!player.remoteVolumeSupported) return;
+  player.remoteVolume = volume;
+  const revision = ++volumeRevision, deviceId = spotify.deviceId;
+  clearTimeout(volumeTimer);
+  volumeTimer = setTimeout(() => {
+    volumeTimer = undefined;
+    volumeTail = volumeTail.then(async () => {
+      if (revision !== volumeRevision || player.song?.source !== 'spotify' || spotify.deviceId !== deviceId) return;
+      volumeSending = true;
+      try { await window.spotify!.command('volume', volume); }
+      catch (error) { if (revision === volumeRevision && player.song?.source === 'spotify') player.error = (error as Error).message; }
+      finally { volumeSending = false; }
+    });
+  }, 120);
+}
+export function collectionPlayback(collection: Pick<Collection, 'id'>) {
+  const current = (player.song?.playbackOrigin?.id || player.song?.albumId) === collection.id;
+  const loading = player.loadingCollectionId === collection.id || (current && player.pending);
+  return { current, loading, listening: current && player.playing && !player.suspended && !player.pending };
 }
 function prepareNext() {
   const i = player.order === 'shuffle' ? perm[cursor + 1] : player.index + 1;
@@ -253,12 +293,14 @@ export function prev() {
 }
 export async function pause() {
   player.requestRevision++;
+  player.loadingCollectionId = '';
   lastRemote = undefined;
   const mine = ++intent; randomDraw++; player.requesting = false; player.pending = true;
   try { await controller.pause(); if (mine === intent) { playing(false); player.pending = false; } }
   catch (error) { if (mine === intent) fail(error); }
 }
 export async function toggle() {
+  if (player.loadingCollectionId && !player.pending && !player.song) { cancelCollectionLoading(); return; }
   if (player.blockedIndex >= 0) return start(player.blockedIndex);
   if (player.playing || player.pending) return pause();
   if (!player.song && player.queue.length) return start(0);
@@ -268,6 +310,7 @@ export async function toggle() {
   try { await controller.resume(); if (mine === intent) { player.pending = false; player.error = ''; playing(true); schedulePoll(1000); } }
   catch (error) { if (mine === intent) fail(error); }
 }
+export function cancelCollectionLoading() { player.requestRevision++; player.requesting = false; player.loadingCollectionId = ''; }
 export async function seek(fraction: number) {
   if (!player.duration || player.pending || !Number.isFinite(fraction)) return;
   const seconds = Math.max(0, Math.min(1, fraction)) * player.duration;
@@ -311,6 +354,7 @@ async function pollRemote() {
     }
     if (result === 'unavailable') { fail(new Error('Spotify Desktop is unavailable. Open it, play and pause a track there, then press Play here.')); return; }
     if (result === 'ended') { lastRemote = undefined; playing(false); next(); return; }
+    observeVolume(state!);
     rememberRemote(track, state!.progress, state!.playing); player.time = state!.progress; playing(state!.playing);
   } catch (error) { if (mine === intent) { logPlayback('spotify-poll-failed', { trackId: track.id, availability: spotify.availability, quotaBlocked: spotify.quotaBlocked, retryAt: spotify.retryAt }); fail(error); } }
   finally {
@@ -324,7 +368,7 @@ const progressTimer = setInterval(() => {
   if (controller.active === 'spotify' && player.playing && !player.pending)
     player.time = Math.min(player.duration, remoteProgress + (performance.now() - remoteSampleAt) / 1000);
 }, 100);
-export function disposePlayback() { clearInterval(progressTimer); clearTimeout(pollTimer); audio.pause(); clearWarm(); }
+export function disposePlayback() { clearInterval(progressTimer); clearTimeout(pollTimer); clearTimeout(volumeTimer); volumeRevision++; audio.pause(); clearWarm(); }
 
 let graph: { ctx: AudioContext; node: GainNode; localAnalysis: GainNode } | null = null;
 export function audioGraph() {

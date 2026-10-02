@@ -24,7 +24,7 @@
 
   function focusHelp(node: HTMLButtonElement) {
     const active = document.activeElement as HTMLElement | null;
-    const previous = active?.closest('[aria-label="Playback options"]') ? document.querySelector<HTMLButtonElement>('button[aria-label="Menu"]') : active;
+    const previous = active?.closest('[aria-label="Playback options"]') ? document.querySelector<HTMLButtonElement>('button[aria-label="Playback options"]') : active;
     node.focus({ preventScroll: true });
     return { destroy() { if (previous?.isConnected && (document.activeElement === document.body || node.closest('.hint')?.contains(document.activeElement))) previous.focus({ preventScroll: true }); } };
   }

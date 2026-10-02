@@ -1,0 +1,566 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-02T07:45:30.988617+00:00",
+  "title": "Design System: Music",
+  "extensions": {
+    "colorMeta": {
+      "ui-surface": {
+        "role": "neutral",
+        "displayName": "Ui surface",
+        "tonalRamp": [
+          "oklch(15% 0.00586 285.89)",
+          "oklch(25% 0.00586 285.89)",
+          "oklch(35% 0.00586 285.89)",
+          "oklch(45% 0.00586 285.89)",
+          "oklch(55% 0.00586 285.89)",
+          "oklch(65% 0.00586 285.89)",
+          "oklch(80% 0.00586 285.89)",
+          "oklch(95% 0.00586 285.89)"
+        ]
+      },
+      "ui-muted": {
+        "role": "neutral",
+        "displayName": "Ui muted",
+        "tonalRamp": [
+          "oklch(15% 0.00548 286.03)",
+          "oklch(25% 0.00548 286.03)",
+          "oklch(35% 0.00548 286.03)",
+          "oklch(45% 0.00548 286.03)",
+          "oklch(55% 0.00548 286.03)",
+          "oklch(65% 0.00548 286.03)",
+          "oklch(80% 0.00548 286.03)",
+          "oklch(95% 0.00548 286.03)"
+        ]
+      },
+      "ui-border": {
+        "role": "neutral",
+        "displayName": "Ui border",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "ui-text": {
+        "role": "neutral",
+        "displayName": "Ui text",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "ui-accent": {
+        "role": "primary",
+        "displayName": "Ui accent",
+        "tonalRamp": [
+          "oklch(15% 0.00403 286.32)",
+          "oklch(25% 0.00403 286.32)",
+          "oklch(35% 0.00403 286.32)",
+          "oklch(45% 0.00403 286.32)",
+          "oklch(55% 0.00403 286.32)",
+          "oklch(65% 0.00403 286.32)",
+          "oklch(80% 0.00403 286.32)",
+          "oklch(95% 0.00403 286.32)"
+        ]
+      },
+      "ui-text-muted": {
+        "role": "neutral",
+        "displayName": "Ui text muted",
+        "tonalRamp": [
+          "oklch(15% 0.00180 247.84)",
+          "oklch(25% 0.00180 247.84)",
+          "oklch(35% 0.00180 247.84)",
+          "oklch(45% 0.00180 247.84)",
+          "oklch(55% 0.00180 247.84)",
+          "oklch(65% 0.00180 247.84)",
+          "oklch(80% 0.00180 247.84)",
+          "oklch(95% 0.00180 247.84)"
+        ]
+      },
+      "classic-surface": {
+        "role": "neutral",
+        "displayName": "Classic surface",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "classic-muted": {
+        "role": "neutral",
+        "displayName": "Classic muted",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "classic-border": {
+        "role": "neutral",
+        "displayName": "Classic border",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "classic-accent": {
+        "role": "neutral",
+        "displayName": "Classic accent",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "neon-surface": {
+        "role": "neutral",
+        "displayName": "Neon surface",
+        "tonalRamp": [
+          "oklch(15% 0.03743 284.95)",
+          "oklch(25% 0.03743 284.95)",
+          "oklch(35% 0.03743 284.95)",
+          "oklch(45% 0.03743 284.95)",
+          "oklch(55% 0.03743 284.95)",
+          "oklch(65% 0.03743 284.95)",
+          "oklch(80% 0.03743 284.95)",
+          "oklch(95% 0.03743 284.95)"
+        ]
+      },
+      "neon-muted": {
+        "role": "neutral",
+        "displayName": "Neon muted",
+        "tonalRamp": [
+          "oklch(15% 0.05435 290.10)",
+          "oklch(25% 0.05435 290.10)",
+          "oklch(35% 0.05435 290.10)",
+          "oklch(45% 0.05435 290.10)",
+          "oklch(55% 0.05435 290.10)",
+          "oklch(65% 0.05435 290.10)",
+          "oklch(80% 0.05435 290.10)",
+          "oklch(95% 0.05435 290.10)"
+        ]
+      },
+      "neon-border": {
+        "role": "neutral",
+        "displayName": "Neon border",
+        "tonalRamp": [
+          "oklch(15% 0.15917 293.54)",
+          "oklch(25% 0.15917 293.54)",
+          "oklch(35% 0.15917 293.54)",
+          "oklch(45% 0.15917 293.54)",
+          "oklch(55% 0.15917 293.54)",
+          "oklch(65% 0.15917 293.54)",
+          "oklch(80% 0.15917 293.54)",
+          "oklch(95% 0.15917 293.54)"
+        ]
+      },
+      "neon-accent": {
+        "role": "primary",
+        "displayName": "Neon accent",
+        "tonalRamp": [
+          "oklch(15% 0.10129 293.57)",
+          "oklch(25% 0.10129 293.57)",
+          "oklch(35% 0.10129 293.57)",
+          "oklch(45% 0.10129 293.57)",
+          "oklch(55% 0.10129 293.57)",
+          "oklch(65% 0.10129 293.57)",
+          "oklch(80% 0.10129 293.57)",
+          "oklch(95% 0.10129 293.57)"
+        ]
+      },
+      "coss-surface": {
+        "role": "neutral",
+        "displayName": "Coss surface",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "coss-muted": {
+        "role": "neutral",
+        "displayName": "Coss muted",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "coss-border": {
+        "role": "neutral",
+        "displayName": "Coss border",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "coss-text": {
+        "role": "neutral",
+        "displayName": "Coss text",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "playback-bar": {
+        "role": "neutral",
+        "displayName": "Playback bar",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "playback-text": {
+        "role": "neutral",
+        "displayName": "Playback text",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "playback-muted": {
+        "role": "neutral",
+        "displayName": "Playback muted",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "playback-line": {
+        "role": "neutral",
+        "displayName": "Playback line",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "artwork-fallback": {
+        "role": "neutral",
+        "displayName": "Artwork fallback",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(25% 0.00000 0.00)",
+          "oklch(35% 0.00000 0.00)",
+          "oklch(45% 0.00000 0.00)",
+          "oklch(55% 0.00000 0.00)",
+          "oklch(65% 0.00000 0.00)",
+          "oklch(80% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Title",
+        "purpose": "Album header, with a smaller phone variant."
+      },
+      "settings-title": {
+        "displayName": "Settings title",
+        "purpose": "Fixed Settings heading."
+      },
+      "section": {
+        "displayName": "Section",
+        "purpose": "Settings and Spotify subsections."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Track content and album details."
+      },
+      "settings-body": {
+        "displayName": "Settings body",
+        "purpose": "Modal content and tabs."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Compact toolbar and playback controls."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Subordinate metadata."
+      },
+      "coss-body": {
+        "displayName": "Coss body",
+        "purpose": "Existing Coss preset controls."
+      }
+    },
+    "shadows": [
+      {
+        "name": "cover-rest",
+        "value": "0 3px 6px #0004",
+        "purpose": "Album cover at rest."
+      },
+      {
+        "name": "cover-hover-focus",
+        "value": "0 4px 18px #0009",
+        "purpose": "Album cover under direct interaction."
+      },
+      {
+        "name": "searchable-menu",
+        "value": "0 12px 36px #0009",
+        "purpose": "Floating collection/filter/sort menu."
+      },
+      {
+        "name": "settings-modal",
+        "value": "0 24px 72px #0009",
+        "purpose": "Centered Settings separation from the wall."
+      }
+    ],
+    "motion": [
+      {
+        "name": "control-colors",
+        "value": "120ms",
+        "purpose": "Shared button background/border feedback."
+      },
+      {
+        "name": "slider-response",
+        "value": "140ms cubic-bezier(.16,1,.3,1)",
+        "purpose": "Thumb hover/focus scale; values update synchronously."
+      },
+      {
+        "name": "select-arrive",
+        "value": "180ms cubic-bezier(.16,1,.3,1)",
+        "purpose": "Dropdown opacity, -6px vertical arrival, and .98 scale."
+      },
+      {
+        "name": "select-leave",
+        "value": "100ms ease-in",
+        "purpose": "Dropdown opacity and small departure."
+      },
+      {
+        "name": "toolbar-response",
+        "value": "transform 180ms ease-out, opacity 140ms ease-out",
+        "purpose": "Idle toolbar without layout changes."
+      },
+      {
+        "name": "pending-rotation",
+        "value": "900ms linear infinite",
+        "purpose": "Collection loading spinner; disabled for reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "intermediate-desktop",
+        "value": "1100px"
+      },
+      {
+        "name": "phone-layout",
+        "value": "700px"
+      },
+      {
+        "name": "settings-compact",
+        "value": "600px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary button",
+      "kind": "button",
+      "description": "Shared accent-filled action; theme variables remain live.",
+      "html": "<button class=\"ds-button\">Use this output</button>",
+      "css": ".ds-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:36px; padding:8px 14px; border:1px solid var(--ui-border,#ffffff26); border-radius:var(--ui-radius,6px); font:14px/1.4 var(--ui-font,\"Avenir Next\",\"Segoe UI\",system-ui,sans-serif); cursor:pointer; transition:background-color 120ms,border-color 120ms; } .ds-button:hover { filter:brightness(1.15); } .ds-button:focus-visible { outline:2px solid var(--ui-accent,#e4e4e7); outline-offset:3px; } .ds-button:disabled { opacity:.4; pointer-events:none; } @media (prefers-reduced-motion:reduce) { .ds-button { transition:none; } }.ds-button { background:var(--ui-accent,#e4e4e7); border-color:var(--ui-accent,#e4e4e7); color:#111; }",
+      "refersTo": "button-primary"
+    },
+    {
+      "name": "Outline button",
+      "kind": "button",
+      "description": "Secondary action on a neutral surface.",
+      "html": "<button class=\"ds-button\">Find devices</button>",
+      "css": ".ds-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:36px; padding:8px 14px; border:1px solid var(--ui-border,#ffffff26); border-radius:var(--ui-radius,6px); font:14px/1.4 var(--ui-font,\"Avenir Next\",\"Segoe UI\",system-ui,sans-serif); cursor:pointer; transition:background-color 120ms,border-color 120ms; } .ds-button:hover { filter:brightness(1.15); } .ds-button:focus-visible { outline:2px solid var(--ui-accent,#e4e4e7); outline-offset:3px; } .ds-button:disabled { opacity:.4; pointer-events:none; } @media (prefers-reduced-motion:reduce) { .ds-button { transition:none; } }.ds-button { background:var(--ui-surface,#18181b); color:var(--ui-text,#fafafa); }",
+      "refersTo": "button-outline"
+    },
+    {
+      "name": "Ghost button",
+      "kind": "button",
+      "description": "Quiet action with a pressed state.",
+      "html": "<button class=\"ds-button\" aria-pressed=\"true\">Dig</button>",
+      "css": ".ds-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:36px; padding:8px 14px; border:1px solid var(--ui-border,#ffffff26); border-radius:var(--ui-radius,6px); font:14px/1.4 var(--ui-font,\"Avenir Next\",\"Segoe UI\",system-ui,sans-serif); cursor:pointer; transition:background-color 120ms,border-color 120ms; } .ds-button:hover { filter:brightness(1.15); } .ds-button:focus-visible { outline:2px solid var(--ui-accent,#e4e4e7); outline-offset:3px; } .ds-button:disabled { opacity:.4; pointer-events:none; } @media (prefers-reduced-motion:reduce) { .ds-button { transition:none; } }.ds-button { background:transparent; border-color:transparent; color:var(--ui-text,#fafafa); } .ds-button:hover, .ds-button[aria-pressed=true] { background:var(--ui-muted,#27272a); border-color:var(--ui-border,#ffffff26); }",
+      "refersTo": "button-ghost"
+    },
+    {
+      "name": "Library search",
+      "kind": "input",
+      "description": "One wrapper boundary and full-opacity placeholder.",
+      "html": "<label class=\"ds-search\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><circle cx=\"10.5\" cy=\"10.5\" r=\"6.5\"/><path d=\"m16 16 5 5\"/></svg><input type=\"search\" aria-label=\"Search library\" placeholder=\"Search\" /></label>",
+      "css": ".ds-search { display:flex; align-items:center; gap:7px; padding:0 9px; border:1px solid var(--ui-border,#ffffff26); border-radius:4px; background:var(--ui-muted,#27272a); color:var(--ui-text,#fafafa); font:12px/1.4 var(--ui-font,\"Avenir Next\",\"Segoe UI\",system-ui,sans-serif); } .ds-search input { width:100%; min-width:0; min-height:32px; padding:6px 0; border:0; border-radius:0; background:transparent; color:inherit; font:inherit; outline:none; } .ds-search input::placeholder { color:var(--ui-text-muted,color-mix(in srgb,#fafafa 72%,#18181b)); opacity:1; } .ds-search:focus-within { outline:2px solid var(--ui-accent,#e4e4e7); outline-offset:2px; }",
+      "refersTo": "library-search"
+    },
+    {
+      "name": "Settings tabs",
+      "kind": "nav",
+      "description": "Fixed tabs with a narrow selected underline; runtime adds roving focus and keyboard navigation.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\" aria-label=\"Settings categories\"><button role=\"tab\" aria-selected=\"true\">Appearance</button><button role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Spotify</button><button role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Advanced</button></div>",
+      "css": ".ds-tabs { display:flex; gap:6px; padding:0 26px; border-bottom:1px solid var(--ui-border,#ffffff26); font:14px/1.5 var(--ui-font,\"Avenir Next\",\"Segoe UI\",system-ui,sans-serif); } .ds-tabs button { position:relative; min-height:46px; padding:0 14px; border:0; border-radius:var(--ui-radius,6px) var(--ui-radius,6px) 0 0; background:transparent; color:var(--ui-text-muted,#bdc2c7); font:inherit; cursor:pointer; } .ds-tabs button:hover { color:var(--ui-text,#fafafa); background:color-mix(in srgb,var(--ui-muted,#27272a) 60%,transparent); } .ds-tabs button[aria-selected=true] { color:var(--ui-text,#fafafa); } .ds-tabs button[aria-selected=true]::after { content:\"\"; position:absolute; left:10px; right:10px; bottom:-1px; height:2px; background:var(--ui-accent,#e4e4e7); } .ds-tabs button:focus-visible { outline:2px solid var(--ui-accent,#e4e4e7); outline-offset:2px; }",
+      "refersTo": "settings-tab"
+    },
+    {
+      "name": "Dig presets",
+      "kind": "chip",
+      "description": "Muted preset chips invert when selected; runtime sets the real tagged-album filter.",
+      "html": "<div class=\"ds-presets\"><button aria-pressed=\"false\">Rainy afternoon</button><button aria-pressed=\"true\">Focus time</button></div>",
+      "css": ".ds-presets { display:flex; gap:6px; overflow-x:auto; font:12px/1.5 var(--ui-font,\"Avenir Next\",\"Segoe UI\",system-ui,sans-serif); } .ds-presets button { white-space:nowrap; min-height:32px; padding:6px 9px; border:0; border-radius:4px; background:var(--ui-muted,#27272a); color:var(--ui-text,#fafafa); font:inherit; cursor:pointer; } .ds-presets button[aria-pressed=true] { background:var(--ui-text,#fafafa); color:var(--ui-surface,#18181b); } .ds-presets button:focus-visible { outline:2px solid var(--ui-text,#fafafa); outline-offset:3px; } .ds-presets button:disabled { opacity:.45; cursor:default; } @media (max-width:700px) { .ds-presets button { min-height:44px; } }",
+      "refersTo": "preset-chip"
+    },
+    {
+      "name": "Cover card",
+      "kind": "card",
+      "description": "Actual square fallback pattern; production cover images crop to this geometry.",
+      "html": "<button class=\"ds-cover\" aria-label=\"Open album\"><span class=\"ds-fallback\">Album artwork</span></button>",
+      "css": ".ds-cover { display:block; position:relative; width:200px; aspect-ratio:1; overflow:hidden; border:0; padding:0; border-radius:2px; background:#191919; color:#ddd; box-shadow:0 3px 6px #0004; cursor:pointer; } .ds-fallback { display:grid; place-items:center; height:100%; padding:16px; font:14px/1.4 var(--ui-font,\"Avenir Next\",\"Segoe UI\",system-ui,sans-serif); } .ds-cover:hover { outline:1px solid #fff; outline-offset:-1px; box-shadow:0 4px 18px #0009; } .ds-cover:focus-visible { outline:2px solid #fff; outline-offset:3px; }",
+      "refersTo": "artwork-card"
+    },
+    {
+      "name": "Cover transport",
+      "kind": "button",
+      "description": "Separate Play/Pause/Resume control; confirmed listening and pending cancellation are runtime states.",
+      "html": "<button class=\"ds-play\" aria-label=\"Play album\"><svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"m8 5 11 7-11 7Z\" /></svg></button>",
+      "css": ".ds-play { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; min-height:36px; padding:0; border:0; border-radius:5px; background:#101010e6; color:#fff; cursor:pointer; } .ds-play:hover { filter:brightness(1.15); } .ds-play:focus-visible { outline:2px solid var(--play-accent,var(--ui-text,#fafafa)); outline-offset:3px; } @media (pointer:coarse) { .ds-play { min-width:44px; min-height:44px; } }",
+      "refersTo": "compact-play"
+    },
+    {
+      "name": "Preference slider",
+      "kind": "input",
+      "description": "Visual geometry of the shared slider; actual pointer and keyboard semantics come from the shipped slider primitive.",
+      "html": "<div class=\"ds-slider\"><span class=\"ds-track\"><span class=\"ds-range\"></span></span><button class=\"ds-thumb\" role=\"slider\" aria-label=\"Familiar to Forgotten\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"50\"></button></div>",
+      "css": ".ds-slider { position:relative; display:flex; align-items:center; width:220px; min-width:80px; height:28px; touch-action:none; } .ds-track { display:block; width:100%; height:5px; overflow:hidden; border-radius:99px; background:#ffffff26; } .ds-range { display:block; width:50%; height:100%; background:var(--ui-accent,#e4e4e7); } .ds-thumb { position:absolute; left:calc(50% - 7.5px); width:15px; height:15px; padding:0; border:2px solid var(--ui-accent,#e4e4e7); border-radius:50%; background:var(--ui-surface,#18181b); transition:transform 140ms cubic-bezier(.16,1,.3,1),background-color 120ms; } .ds-slider:hover .ds-thumb, .ds-thumb:focus-visible { transform:scale(1.18); } .ds-thumb:focus-visible { outline:2px solid var(--ui-accent,#e4e4e7); outline-offset:3px; } .ds-slider:active .ds-thumb { transform:scale(1.3); background:var(--ui-accent,#e4e4e7); } @media (prefers-reduced-motion:reduce) { .ds-thumb { transition:background-color 80ms; } .ds-slider:hover .ds-thumb, .ds-slider:active .ds-thumb, .ds-thumb:focus-visible { transform:none; } }"
+    },
+    {
+      "name": "Dig mood map",
+      "kind": "custom",
+      "description": "Local gradient map for manual mood/energy tags; runtime supplies pointer capture and arrow/Home input.",
+      "html": "<button class=\"ds-map\" aria-label=\"Mood map: 50% happy, 50% intense\"><span class=\"ds-axis ds-left\">Sad</span><span class=\"ds-axis ds-right\">Happy</span><span class=\"ds-axis ds-top\">Intense</span><span class=\"ds-axis ds-bottom\">Calm</span><span class=\"ds-cross ds-horizontal\"></span><span class=\"ds-cross ds-vertical\"></span><span class=\"ds-point\"></span></button>",
+      "css": ".ds-map { display:block; position:relative; width:100%; height:190px; padding:0; border:0; background:linear-gradient(0deg,#164047a6,transparent),linear-gradient(90deg,#493351,#53512f); touch-action:none; cursor:crosshair; color:#fff; font:12px/1.5 var(--ui-font,\"Avenir Next\",\"Segoe UI\",system-ui,sans-serif); } .ds-axis { position:absolute; font-size:10px; pointer-events:none; } .ds-left { left:12px; top:calc(50% - 7px); } .ds-right { right:12px; top:calc(50% - 7px); } .ds-top { top:10px; left:50%; transform:translateX(-50%); } .ds-bottom { bottom:10px; left:50%; transform:translateX(-50%); } .ds-cross { position:absolute; background:#ffffff30; pointer-events:none; } .ds-horizontal { left:15%; right:15%; height:1px; top:50%; } .ds-vertical { top:20%; bottom:20%; width:1px; left:50%; } .ds-point { position:absolute; left:50%; top:50%; width:12px; height:12px; border-radius:50%; background:#fff; transform:translate(-50%,-50%); box-shadow:0 2px 7px #0005; pointer-events:none; } .ds-map:focus-visible { outline:2px solid var(--ui-text,#fafafa); outline-offset:3px; } @media (max-width:700px) { .ds-map { height:170px; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Artwork leads",
+    "overview": "The approved direction is the Music Figma file's [Current page](https://www.figma.com/design/OfsKpzlMZkLzzoHMWA4FHg/Music?node-id=52-871): square cover artwork, a restrained charcoal ground, compact neutral controls, and direct playback. “Artwork leads” repeats the supplied direction; it is not a newly invented brand metaphor. Descriptive token names and the named rules below are documentation labels inferred from the implemented system.\n\nThis records the Svelte interface shared by web and Electron after the five scored implementation fixes received a ship disposition. Ground truth is `frontend/src/components.css`, `app.css`, `coss.css`, `Grid.svelte`, `ArtworkView.svelte`, `CollectionDetails.svelte`, `CollectionPlayback.svelte`, `Queue.svelte`, `Bar.svelte`, `DigPanel.svelte`, and the Settings implementation. Preserve the already polished tabbed Settings structure. Studio is the fresh-install component preset; saved Classic, Neon, Coss, materials, density, and motion preferences remain supported.\n\nAlbum detail and Queue/Recently played share the full-color ArtworkView: equal desktop columns within (1680px), complete contained artwork bounded by viewport height, and a stacked phone cover up to (360px). Queue/history tabs remember their scroll positions. The bottom Menu toggles the expanded player and shows X while open; playback options remain in the header overflow menu anchored below its measured trigger. Share closes the expanded player before opening its drawer.\n\nEvidence is the source plus the synthetic desktop and phone captures in `.impeccable/review/`, with scope and disposition in `.audit-results/figma-current/review-packet.md` and `finish-verdict.md`. No PRODUCT.md, QUALITY BAR card, approved comp, or comp-diff exists; this is an implementation record, not a pixel-match certification or a product requirements document. Physical touch, 60 fps performance, live Spotify/audio capture, delayed history-write execution, and native Mac rendering remain untested. The ship disposition covers the five scored fixes, not a complete surface certification. The subsequent unified album/player extension is recorded in `.audit-results/unified-player/review-packet.md`, with synthetic captures in `.impeccable/review/unified-player/`. That scope covers the shared artwork view, queue/history tabs, and relocated playback options; history timing under load and all-source queue mutation remain untested alongside the native, physical-touch, performance, and live-provider limits above.",
+    "keyCharacteristics": [
+      "Square album artwork dominates the viewport.",
+      "Neutral chrome gives feedback through focused, hovered, selected, pending, and confirmed playback states.",
+      "Album detail and the expanded player adapt their ground to artwork while the playback bar stays neutral.",
+      "Background work preserves the user's wall order, view, scroll position, and queue.",
+      "Discovery states its manual-tag and listening-history data sources."
+    ],
+    "rules": [
+      {
+        "name": "The Artwork Ground Rule",
+        "body": "Keep the library control layer neutral; derive album-detail color from its artwork rather than treating fixture colors as brand colors.",
+        "section": "colors"
+      },
+      {
+        "name": "The Legible Control Rule",
+        "body": "Use the active theme's muted foreground for secondary control text and the library Search placeholder at opacity 1; a quiet control still needs visible text.",
+        "section": "typography"
+      },
+      {
+        "name": "The Stable Wall Rule",
+        "body": "Background refresh replaces tiles in place and appends new matches; only explicit filtering, sorting, or density actions may change the user's browsing arrangement. Apply warmed cover-color order through the explicit Apply action.",
+        "section": "layout"
+      },
+      {
+        "name": "The State Depth Rule",
+        "body": "Keep strong separation on floating surfaces and direct interaction states; do not add decorative elevation to every toolbar control.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Confirmed Playback Rule",
+        "body": "Show the thick white outline and listening bars only for confirmed playing at that origin. Paused current items offer Resume; pending items show a distinct cancellable loading control. Hover/focus replaces listening bars with Pause.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "**Do** keep square artwork dominant and the control layer neutral.",
+      "**Do** preserve saved component styles, materials, columns, and motion preferences.",
+      "**Do** keep cover opening and playback as distinct controls with visible keyboard feedback.",
+      "**Do** preserve wall order, scroll, and queue while background data settles.",
+      "**Do** state the manual-tag and confirmed-history basis of Dig.",
+      "**Do** preserve the fixed Settings header/tabs and single scrolling body."
+    ],
+    "donts": [
+      "**Don't** show confirmed-playing decoration for paused, suspended, or pending playback.",
+      "**Don't** let volume collide with centered transport at intermediate desktop widths.",
+      "**Don't** focus library Search underneath an open album view.",
+      "**Don't** promote fixture artwork colors or synthesized sidecar ramps into brand tokens.",
+      "**Don't** turn source gaps or untested native/live-provider behavior into certified design claims."
+    ]
+  }
+}

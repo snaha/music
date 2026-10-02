@@ -43,7 +43,34 @@ export class SpotifyService {
     return this.snapshot();
   }
 
-  rebuildIndex() { this.indexed = deriveAlbums(this.cache); }
+  rebuildIndex() {
+    this.indexed = deriveAlbums(this.cache);
+    const normalize = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+    const collections = new Map([...this.cache.collections, ...this.indexed.albums].map(tile => [tile.id, tile]));
+    this.searchCollections = [...collections.values()].map(tile => ({ tile, text: normalize([tile.title, tile.sub, tile.year, ...(tile.genres ?? [])].join(' ')) }));
+    const tracks = new Map();
+    for (const list of this.indexed.tracks.values()) for (const track of list) tracks.set(track.id, track);
+    this.searchTracks = [...tracks.values()].map(track => ({ track: { ...track, playbackOrigin: collections.get(track.albumId) },
+      text: normalize([track.title, track.artist, track.album, track.albumInfo?.year, ...(track.albumInfo?.genres ?? []), ...(track.origins ?? []).map(origin => origin.title)].join(' ')) }));
+    const artists = new Map();
+    for (const album of this.indexed.albums) if (album.sub) {
+      const artist = artists.get(album.sub);
+      if (artist) artist.count++;
+      else artists.set(album.sub, { id: `spotify:artist:${album.sub}`, rawId: album.sub, source: 'spotify', kind: 'artist', title: album.sub, sub: 'Artist', cover: album.cover, count: 1, available: true });
+    }
+    this.searchArtists = [...artists.values()].map(tile => ({ tile, text: normalize(tile.title) }));
+  }
+  search(query, offset = 0) {
+    if (typeof query !== 'string' || query.length > 500 || !Number.isInteger(offset) || offset < 0) throw new Error('Invalid catalog search.');
+    const words = query.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return { collections: [], artists: [], tracks: [], next: null };
+    const matches = text => words.every(word => text.includes(word));
+    const tracks = (this.searchTracks ?? []).filter(item => matches(item.text));
+    const related = new Set(tracks.flatMap(({ track }) => [track.albumId, ...(track.origins ?? []).map(origin => origin.id)]));
+    return { collections: (this.searchCollections ?? []).filter(item => matches(item.text) || related.has(item.tile.id)).map(item => item.tile),
+      artists: (this.searchArtists ?? []).filter(item => matches(item.text)).map(item => item.tile),
+      tracks: tracks.slice(offset, offset + 50).map(item => item.track), next: offset + 50 < tracks.length ? offset + 50 : null };
+  }
   async waitForPlayback() { while (Date.now() < this.transitionUntil) await delay(100); }
   transition(active) { this.transitionUntil = active ? Date.now() + 30000 : 0; }
   albumTracks(id, offset = 0, snapshot) {
@@ -340,11 +367,17 @@ export class SpotifyService {
     if (!state) return null;
     return { deviceId: state.device?.id, playing: !!state.is_playing, progress: (state.progress_ms ?? 0) / 1000,
       track: musicTrack(state.item), type: state.currently_playing_type, shuffle: state.shuffle_state,
-      repeat: state.repeat_state, disallows: state.actions?.disallows ?? {} };
+      repeat: state.repeat_state, disallows: state.actions?.disallows ?? {}, volume: state.device?.volume_percent,
+      supportsVolume: state.device?.supports_volume === true };
   }
   async command(action, value) {
     if (!this.config.deviceId) throw new Error('Select Spotify Desktop in Settings first.');
     const q = `device_id=${encodeURIComponent(this.config.deviceId)}`;
+    if (action === 'volume' && Number.isFinite(value) && value >= 0 && value <= 100) {
+      const state = await this.api('/me/player');
+      if (state?.device?.id !== this.config.deviceId || !state.device.supports_volume) throw new Error('Change the volume in Spotify or on the selected speaker.');
+      return this.api(`/me/player/volume?volume_percent=${Math.round(value)}&${q}`, { method: 'PUT' });
+    }
     if (action === 'play') {
       if (!/^spotify:track:[A-Za-z0-9]+$/.test(value)) throw new Error('Only Spotify music tracks can be played.');
       const before = await this.api('/me/player');

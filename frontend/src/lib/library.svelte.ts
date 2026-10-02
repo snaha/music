@@ -11,8 +11,8 @@ export const library = $state({ mode: 'albums' as Mode, tiles: [] as Tile[], vis
   error: '', source: 'all' as 'all' | 'local' | 'spotify', highlight: false, scan: { scanning: false, count: 0 } });
 let localTiles: Tile[] = [], req = 0, pickRequest = 0, listing = true;
 
-const album = (a: AlbumID3): Tile => ({ id: localId('album', a.id), rawId: a.id, source: 'local', cover: coverUrl(a.coverArt), title: a.name, sub: a.artist ?? '', kind: 'album', count: a.songCount ?? 1, available: true, addedAt: a.created ? new Date(a.created).toISOString() : undefined, favorite: !!a.starred });
-const playlist = (p: Playlist): Tile => ({ id: localId('playlist', p.id), rawId: p.id, source: 'local', cover: coverUrl(p.coverArt ?? `pl-${p.id}`), title: p.name, sub: 'playlist', kind: 'playlist', count: p.songCount ?? 1, available: true });
+export const album = (a: AlbumID3): Tile => ({ id: localId('album', a.id), rawId: a.id, source: 'local', cover: coverUrl(a.coverArt), title: a.name, sub: a.artist ?? '', kind: 'album', count: a.songCount ?? 1, available: true, addedAt: a.created ? new Date(a.created).toISOString() : undefined, favorite: !!a.starred, year: a.year, genres: a.genre ? [a.genre] : [] });
+export const playlist = (p: Playlist): Tile => ({ id: localId('playlist', p.id), rawId: p.id, source: 'local', cover: coverUrl(p.coverArt ?? `pl-${p.id}`), title: p.name, sub: 'playlist', kind: 'playlist', count: p.songCount ?? 1, available: true });
 export const localTrack = (s: Child): Track => ({ id: localId('track', s.id), rawId: s.id, source: 'local', title: s.title,
   artist: s.artist, album: s.album, albumId: s.albumId ? localId('album', s.albumId) : undefined,
   coverId: s.coverArt, cover: coverUrl(s.coverArt, 512), duration: s.duration, track: s.track, disc: s.discNumber, available: true });
@@ -83,7 +83,7 @@ export function watchScan() {
 }
 
 const rnd = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
-const spotifyAlbums = (t: Tile) => spotify.collections.filter((a) => a.kind === 'album' && a.sub === t.rawId);
+const spotifyAlbums = (t: Tile) => spotify.albums.filter((a) => a.sub === t.rawId);
 export async function songsOf(t: Tile): Promise<Track[]> {
   const tracks: Track[] = [];
   for await (const page of trackPages(t)) tracks.push(...page);
@@ -109,8 +109,8 @@ export async function* trackPages(t: Tile): AsyncGenerator<Track[]> {
   if (albums.length) yield* trackPages(album(rnd(albums)));
 }
 export async function pick(t: Tile) {
-  if (t.source === 'spotify' && !spotifyPlayable()) { player.error = spotifyMessage(); player.view = 'settings'; return; }
-  const mine = ++pickRequest; player.requesting = true; player.error = '';
+  if (t.source === 'spotify' && t.kind !== 'artist' && !spotifyPlayable()) { player.error = spotifyMessage(); player.view = 'settings'; return; }
+  const mine = ++pickRequest; player.requesting = true; player.loadingCollectionId = t.id; player.error = '';
   const selection = ++player.requestRevision;
   try {
     if (t.kind !== 'artist') {
@@ -130,9 +130,9 @@ export async function pick(t: Tile) {
     }
     const albums = t.source === 'spotify' ? spotifyAlbums(t) : (ok(await session.api!.getArtist({ id: t.rawId })).artist.album ?? []).map(album);
     if (mine !== pickRequest) return;
-    req++; listing = false; library.tiles = albums;
-  } catch (error) { if (mine === pickRequest) player.error = (error as Error).message; }
-  finally { if (mine === pickRequest) player.requesting = false; }
+    req++; listing = false; library.mode = 'albums'; library.tiles = albums;
+  } catch (error) { if (mine === pickRequest && player.loadingCollectionId === t.id) player.error = (error as Error).message; }
+  finally { if (mine === pickRequest) { player.requesting = false; player.loadingCollectionId = ''; } }
 }
 let addTail = Promise.resolve();
 export function addCollection(t: Tile) {

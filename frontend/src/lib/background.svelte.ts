@@ -6,7 +6,7 @@ export type Material = keyof typeof MATERIALS;
 // how the grid's background looks; every option is saved as it changes (device only, like the other settings)
 const saved = JSON.parse(localStorage.getItem('bg') ?? '{}');
 export const bg = $state({
-  material: (saved.material in MATERIALS ? saved.material : localStorage.getItem('material') ?? 'vinyl') as Material,
+  material: (saved.material in MATERIALS ? saved.material : localStorage.getItem('material') ?? 'noise') as Material,
   scroll: saved.scroll ?? true, // the background moves with the cards, or stays put behind them
   tile: saved.tile ?? true, // custom image repeats at its own size, or is stretched to fill the screen
   custom: '', // object URL of the imported image, '' when there is none

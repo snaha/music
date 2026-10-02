@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('spotify', {
   checkAvailability: (force) => call('check-availability', force), removeLibrary: () => call('remove-library'),
   disconnect: () => call('disconnect'), refresh: () => call('refresh'),
   albumTracks: (id, offset, snapshot) => call('album-tracks', id, offset, snapshot), transition: (active) => call('transition', active),
+  search: (query, offset) => call('search', query, offset),
   tracks: (id, offset) => call('tracks', id, offset), devices: () => call('devices'),
   selectDevice: (id, sameMac) => call('select-device', id, sameMac), playback: () => call('playback'),
   command: (action, value) => call('command', action, value), external: (url) => call('external', url),
@@ -30,6 +31,7 @@ contextBridge.exposeInMainWorld('spotifyCapture', {
 });
 
 contextBridge.exposeInMainWorld('musicHistory', {
+  stats: (query) => ipcRenderer.invoke('music-history:stats', query),
   write: (batch) => ipcRenderer.invoke('music-history:write', batch),
   list: (query) => ipcRenderer.invoke('music-history:list', query),
   clear: (scope) => ipcRenderer.invoke('music-history:clear', { scope }),

@@ -10,6 +10,7 @@ export type Collection = {
   id: string; rawId: string; source: Source; kind: 'album' | 'artist' | 'playlist';
   title: string; sub: string; cover: string; count: number; externalUrl?: string;
   available: boolean; incomplete?: boolean; addedAt?: string; saved?: boolean; indexing?: boolean; favorite?: boolean; origins?: string[];
+  year?: number; genres?: string[];
 };
 export type SpotifyAvailability = 'checking' | 'ready' | 'disconnected' | 'reconnect' | 'offline' | 'device-unavailable' | 'restricted';
 export type SpotifyStatus = {
@@ -22,9 +23,10 @@ export type SpotifyStatus = {
 export type SpotifyDevice = { id: string; name: string; type: string; is_restricted: boolean; is_active: boolean };
 export type SpotifyPlayback = {
   deviceId: string; playing: boolean; progress: number; track: Track | null; type: string;
-  shuffle: boolean; repeat: string; disallows: Record<string, boolean>;
+  shuffle: boolean; repeat: string; disallows: Record<string, boolean>; volume?: number; supportsVolume?: boolean;
 };
 export type SpotifyBridge = {
+  search(query: string, offset?: number): Promise<{ collections: Collection[]; artists: Collection[]; tracks: Track[]; next: number | null }>;
   status(): Promise<SpotifyStatus>; connect(clientId: string): Promise<SpotifyStatus>; cancel(): Promise<void>;
   checkAvailability(force?: boolean): Promise<SpotifyStatus>; removeLibrary(): Promise<SpotifyStatus>;
   disconnect(): Promise<SpotifyStatus>; refresh(): Promise<SpotifyStatus>;
@@ -33,7 +35,7 @@ export type SpotifyBridge = {
   tracks(id: string, offset: number): Promise<{ tracks: Track[]; next: number | null; incomplete?: boolean }>;
   devices(): Promise<SpotifyDevice[]>; selectDevice(id: string, sameMac: boolean): Promise<SpotifyStatus>;
   playback(): Promise<SpotifyPlayback | null>;
-  command(action: 'play' | 'pause' | 'resume' | 'seek', value?: string | number): Promise<void>;
+  command(action: 'play' | 'pause' | 'resume' | 'seek' | 'volume', value?: string | number): Promise<void>;
   external(url: string): Promise<void>; onChange(callback: (status: SpotifyStatus) => void): () => void;
 };
 export const localId = (kind: string, id: string) => `local:${kind}:${id}`;

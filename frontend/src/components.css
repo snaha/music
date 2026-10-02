@@ -1,7 +1,7 @@
 @import "./coss.css";
 
 /* Local styling for shadcn-svelte; avoids a global CSS reset on the cover wall. */
-:root { --ui-surface: #18181b; --ui-muted: #27272a; --ui-border: #ffffff26; --ui-text: #fafafa; --ui-accent: #a3e635; --ui-radius: 9px; --ui-text-muted: #bdc2c7; --ui-font: "Avenir Next", "Segoe UI", system-ui, sans-serif; }
+:root { --ui-surface: #18181b; --ui-muted: #27272a; --ui-border: #ffffff26; --ui-text: #fafafa; --ui-accent: #e4e4e7; --ui-radius: 6px; --ui-text-muted: #bdc2c7; --ui-font: "Avenir Next", "Segoe UI", system-ui, sans-serif; }
 :root[data-components=classic] { --ui-surface: #111; --ui-muted: #222; --ui-border: #ffffff40; --ui-accent: #eee; --ui-radius: 3px; }
 :root[data-components=neon] { --ui-surface: #151427; --ui-muted: #292442; --ui-border: #a78bfa55; --ui-accent: #c4b5fd; --ui-radius: 16px; }
 .cn-button[data-slot=button] { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px; box-sizing: border-box; white-space: nowrap; font: inherit; text-decoration: none; padding: 8px 14px; min-height: 36px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-muted); color: var(--ui-text); cursor: pointer; transition: background-color 120ms, border-color 120ms; }

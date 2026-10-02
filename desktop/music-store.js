@@ -63,6 +63,14 @@ export class MusicStore {
     });
     return { entries, total, hasMore: offset + entries.length < total };
   }
+  stats({ scope }) {
+    if (typeof scope !== 'string' || !scope || scope.length > 2048) throw new Error('Invalid history scope');
+    const counts = new Map();
+    const add = (row) => { if (!row.id) return; const old = counts.get(row.id); counts.set(row.id, { plays: (old?.plays || 0) + row.plays, lastPlayed: Math.max(old?.lastPlayed || 0, row.lastPlayed) }); };
+    for (const row of this.db.prepare('SELECT origin_id id,count(*) plays,max(played_at) lastPlayed FROM plays WHERE scope=? AND origin_id IS NOT NULL GROUP BY origin_id').all(scope)) add(row);
+    for (const row of this.db.prepare(`SELECT json_extract(e.metadata,'$.albumId') id,count(*) plays,max(p.played_at) lastPlayed FROM plays p JOIN music_entities e ON e.scope=p.scope AND e.id=p.track_id WHERE p.scope=? AND json_extract(e.metadata,'$.albumId') IS NOT NULL AND (p.origin_id IS NULL OR p.origin_id<>json_extract(e.metadata,'$.albumId')) GROUP BY id`).all(scope)) add(row);
+    return Object.fromEntries(counts);
+  }
   clear({ scope }) {
     this.db.exec('BEGIN');
     try {

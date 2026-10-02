@@ -104,7 +104,7 @@
 <style>
   .capture { position: absolute; top: 20px; left: 20px; display: flex; gap: 12px; align-items: center; color: #ccc; cursor: auto; pointer-events: auto; background: #111b; padding: 10px; border-radius: 6px; }
   .capture button { color: #fff; background: #333; border: 1px solid #777; padding: 8px 12px; cursor: pointer; }
-  .vis { position: fixed; inset: 0; background: #000; z-index: 3; cursor: none; }
+  .vis { position: fixed; inset: 0; background: #000; z-index: 20; cursor: none; }
   .vis.bg { z-index: -1; cursor: auto; pointer-events: none; }
   canvas { width: 100%; height: 100%; display: block; }
   .name { position: absolute; left: 20px; bottom: 16px; color: #fff; opacity: .6; font-size: 12px; letter-spacing: .1em; text-shadow: 0 1px 4px #000; }

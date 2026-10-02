@@ -1,6 +1,26 @@
 // A small, cached artwork sample. Playback never waits for color extraction.
 export const fallbackPalette = '--play-surface:#20232a;--play-bar:#15171c;--play-text:#f5f5f7;--play-muted:#c3c5cd;--play-accent:#d7deef;--play-line:#ffffff24;';
 const cache = new Map<string, Promise<string>>();
+export async function artworkHue(src: string): Promise<number | undefined> {
+  try {
+    const image = new Image(); image.crossOrigin = 'anonymous'; image.src = src;
+    await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 12;
+    const context = canvas.getContext('2d', { willReadFrequently: true }); if (!context) return;
+    context.drawImage(image, 0, 0, 12, 12);
+    const pixels = context.getImageData(0, 0, 12, 12).data;
+    let x = 0, y = 0, weight = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i + 3] < 128) continue;
+      const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]].map(c => c / 255);
+      const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min;
+      if (delta < .08 || max < .1) continue;
+      const hue = (max === r ? ((g - b) / delta + 6) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4) * Math.PI / 3;
+      x += Math.cos(hue) * delta; y += Math.sin(hue) * delta; weight += delta;
+    }
+    return weight ? (Math.atan2(y, x) * 180 / Math.PI + 360) % 360 : 360;
+  } catch { return; }
+}
 const mix = (color: number[], target: number, amount: number) => color.map(channel => Math.round(channel * (1 - amount) + target * amount));
 const rgb = (color: number[]) => `rgb(${color.join(' ')})`;
 const luminance = (color: number[]) => color.map(channel => { const c = channel / 255; return c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; }).reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);

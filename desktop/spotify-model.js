@@ -20,6 +20,7 @@ export function albumTile(a, addedAt) {
     id: spotifyId('album', a.id), rawId: a.id, source: 'spotify', kind: 'album',
     title: a.name, sub: (a.artists ?? []).map((x) => x.name).join(', '),
     cover: a.images?.[0]?.url ?? '', count: a.total_tracks ?? 0, addedAt,
+    year: Number.parseInt(a.release_date, 10) || undefined, genres: a.genres ?? [],
     externalUrl: `https://open.spotify.com/album/${a.id}`, available: true,
   };
 }

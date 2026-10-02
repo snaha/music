@@ -105,7 +105,7 @@ app.whenReady().then(async () => {
 
   const page = `http://127.0.0.1:${st.webPort}/`;
   musicDatabase = new MusicDatabase(path.join(app.getPath('userData'), 'music.sqlite'));
-  for (const method of ['write', 'list', 'clear']) ipcMain.handle(`music-history:${method}`, async (event, args) => {
+  for (const method of ['write', 'list', 'clear', 'stats']) ipcMain.handle(`music-history:${method}`, async (event, args) => {
     if (event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== page) throw new Error('History is available only in Music.');
     return musicDatabase.call(method, args);
   });
@@ -129,6 +129,7 @@ app.whenReady().then(async () => {
   handleSpotify('disconnect', () => { capture?.stop(); return spotify.disconnect(); });
   handleSpotify('refresh', () => spotify.refreshLibrary(true));
   handleSpotify('album-tracks', (id, offset, snapshot) => spotify.albumTracks(id, offset, snapshot));
+  handleSpotify('search', (query, offset) => spotify.search(query, offset));
   handleSpotify('transition', (active) => spotify.transition(!!active));
   handleSpotify('tracks', (id, offset) => spotify.tracks(id, offset));
   handleSpotify('devices', () => spotify.devices());

@@ -12,3 +12,6 @@ navidrome/data/
 
 # Agent audit screenshots and reports
 .audit-results/
+
+# Local design review captures
+.impeccable/review/

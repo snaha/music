@@ -1,6 +1,7 @@
 // injected by the Electron preload (desktop/preload.js)
 interface Window {
   musicHistory?: {
+    stats?(query: { scope: string }): Promise<Record<string, { plays: number; lastPlayed: number }>>;
     write(batch: { scope: string; contexts: import('./lib/listening-history.svelte').ListeningContext[]; entries: { id: string; contextId: string; index: number; cursor: number; playedAt: number }[]; importKey?: string }): Promise<void>;
     list(query: { scope: string; query?: string; offset?: number }): Promise<{ entries: import('./lib/listening-history.svelte').HistoryEntry[]; total: number; hasMore: boolean }>;
     clear(scope: string): Promise<void>;
