@@ -27,8 +27,9 @@
   // Navidrome >= 0.64 omits coverArt when no image exists, so an empty cover URL means no art
   // the playing album always shows, even without art, so it can be found and scrolled to
   // search set: filter as you type over title and subtitle (artist name for albums)
-  // accents are folded on both sides, so "skool" finds "Skoöl" and "motorhead" finds "Motörhead"
-  const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  // accents are folded on both sides, so "skool" finds "Skoöl" and "motorhead" finds "Motörhead"; any dash counts as a
+  // space, so "buddha bar" finds "Buddha‐Bar" and "buddha-bar" finds "Buddha Bar"
+  const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\p{Pd}/gu, ' ').toLowerCase();
   let query = $state('');
   let shown = $derived.by(() => {
     const q = fold(query.trim());
