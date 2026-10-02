@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, safeStorage, session as electronSession, shell } from 'electron';
 import { MusicDatabase } from './music-database.js';
 import { SpotifyCapture } from './spotify-capture.js';
 import { SpotifyService } from './spotify.js';
@@ -9,10 +9,34 @@ import http from 'node:http';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { assertProfileClosed, copyProfile, launchProfile, listProfiles, loadProfile, lockProfile, newProfile, readJSON, rememberProfile, saveProfile, selectedProfile } from './profiles.js';
+import { migrateStorage } from './storage-migration.js';
 
-const here = path.dirname(new URL(import.meta.url).pathname);
+const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, 'dist');
 const navidromeBin = app.isPackaged ? path.join(process.resourcesPath, 'navidrome') : path.join(here, 'bin', 'navidrome');
+const page = 'app://music/';
+protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
+const build = readJSON(path.join(here, 'build-info.json'), { version: app.getVersion(), channel: 'stable', commit: '', branch: '', builtAt: '', runUrl: '' });
+let profile, config, launchError = '', hasInstanceLock = false;
+try {
+  profile = launchProfile({ argv: process.argv.slice(1), env: process.env, appData: app.getPath('appData'), channel: build.channel });
+  mkdirSync(profile.directory, { recursive: true, mode: 0o700 });
+  app.setPath('userData', profile.directory);
+  app.setPath('sessionData', profile.directory);
+  hasInstanceLock = app.requestSingleInstanceLock();
+  if (hasInstanceLock) {
+    lockProfile(profile.directory);
+    config = loadProfile(profile, app.getPath('music'));
+    rememberProfile(profile);
+  }
+} catch (error) { launchError = error.message; }
+app.on('second-instance', () => {
+  const win = BrowserWindow.getAllWindows().find(window => window.isVisible());
+  if (win?.isMinimized()) win.restore();
+  win?.focus();
+});
 
 const isFree = (port) => new Promise((resolve) => {
   const s = createServer();
@@ -47,25 +71,19 @@ function lanIp() {
 // serves the built frontend on the LAN so phones can open the share link; the window uses it too
 const MIME = { '.html': 'text/html', '.webmanifest': 'application/manifest+json', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
 function serveFrontend(port) {
-  http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     let file = path.join(dist, p === '/' ? 'index.html' : p);
     if (!file.startsWith(dist) || !existsSync(file) || statSync(file).isDirectory()) file = path.join(dist, 'index.html');
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream' });
     createReadStream(file).pipe(res);
   }).listen(port, '0.0.0.0');
+  return server;
 }
 
-async function musicDir() {
-  const dir = app.getPath('music');
-  if (existsSync(dir)) return dir;
-  const r = await dialog.showOpenDialog({ title: 'Choose your music folder', properties: ['openDirectory'] });
-  if (r.canceled) { app.quit(); return null; }
-  return r.filePaths[0];
-}
-
-async function waitFor(url) {
+async function waitFor(url, child) {
   for (let i = 0; i < 240; i++) {
+    if (child.exitCode !== null || child.signalCode !== null || !child.pid) throw new Error('The bundled music server could not start. Restart Music or try a fresh profile.');
     try { if ((await net.fetch(url)).ok) return; } catch {}
     await new Promise((r) => setTimeout(r, 250));
   }
@@ -78,35 +96,44 @@ let capture;
 let captureOwner;
 let musicDatabase;
 
+let frontendServer;
+let bootstrapping = true;
+let phase = 'setup', startupError = '', startPromise;
+let st, local = '';
+const desktopStatus = () => ({
+  phase, error: startupError, onboarding: !config.setupComplete,
+  url: local, username: st?.username || '', password: st?.password || '', frame: st?.frame ?? true,
+  share: st ? { webPort: st.webPort, port: st.port, password: st.sharePassword } : undefined,
+  build, profile: { name: profile.name, label: config.label || (profile.existing ? 'Music' : profile.name === 'default' ? 'Preview' : profile.name), directory: profile.directory, existing: profile.existing, portable: profile.portable },
+  musicFolder: config.musicFolder || '', source: config.source,
+  canCopy: !profile.existing && existsSync(path.join(profile.existingDirectory, 'navidrome', 'credentials.json')),
+});
+const changed = () => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send('desktop:changed', desktopStatus()); };
+const trusted = event => {
+  if (event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== page) throw new Error('This action is available only in Music.');
+};
+
 app.whenReady().then(async () => {
-  // macOS takes Cmd+Q and the Dock/app-switcher quit from the app menu; without one the app can't be quit and a
-  // freshly installed version just re-activates the old process that is still running
+  if (launchError) { dialog.showErrorBox('Cannot open Music', launchError); app.quit(); return; }
+  if (!hasInstanceLock) { app.quit(); return; }
   Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]) : null);
-  const dataDir = path.join(app.getPath('userData'), 'navidrome');
-  mkdirSync(dataDir, { recursive: true });
-  const music = await musicDir();
-  if (!music) return;
-  const st = await state(dataDir);
-  const local = `http://127.0.0.1:${st.port}`;
-  ipcMain.handle('lan-ip', () => lanIp()); // looked up when the share overlay opens, so a network change needs no restart
-
-  navidrome = spawn(navidromeBin, [], {
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      ND_ADDRESS: '0.0.0.0', ND_PORT: String(st.port), // on the LAN so shared phones can stream
-      ND_DATAFOLDER: dataDir, ND_CACHEFOLDER: path.join(dataDir, 'cache'), ND_MUSICFOLDER: music,
-      ND_DEVAUTOCREATEADMINPASSWORD: st.password, // only used on the very first run
-      ND_ENABLEINSIGHTSCOLLECTOR: 'false', ND_SCANSCHEDULE: '1h', ND_LOGLEVEL: 'warn',
-    },
+  protocol.handle('app', request => {
+    const url = new URL(request.url);
+    if (url.hostname !== 'music') return new Response('Not found', { status: 404 });
+    if (url.pathname === '/__music_storage_migration') return new Response('<!doctype html><title>Music storage migration</title>', { headers: { 'content-type': 'text/html' } });
+    const file = path.resolve(dist, `.${decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname)}`);
+    if (path.relative(dist, file).startsWith('..') || !existsSync(file) || !statSync(file).isFile()) return new Response('Not found', { status: 404 });
+    return net.fetch(pathToFileURL(file).href);
   });
-  navidrome.on('exit', (code) => { if (!app.isQuitting) { dialog.showErrorBox('Music', `Navidrome stopped (exit code ${code})`); app.quit(); } });
-  serveFrontend(st.webPort);
-
-  const page = `http://127.0.0.1:${st.webPort}/`;
-  musicDatabase = new MusicDatabase(path.join(app.getPath('userData'), 'music.sqlite'));
+  await migrateStorage(profile, config);
+  const dataDir = path.join(profile.directory, 'navidrome');
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  st = readJSON(path.join(dataDir, 'credentials.json'), null);
+  if (config.musicFolder && !existsSync(config.musicFolder)) { config.setupComplete = false; startupError = 'Your music folder is unavailable. Reconnect its drive or choose another folder.'; }
+  phase = config.setupComplete ? 'starting' : 'setup';
   for (const method of ['write', 'list', 'clear', 'stats']) ipcMain.handle(`music-history:${method}`, async (event, args) => {
-    if (event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== page) throw new Error('History is available only in Music.');
+    trusted(event);
+    if (!musicDatabase) throw new Error('Your library is still starting.');
     return musicDatabase.call(method, args);
   });
   spotify = new SpotifyService({
@@ -115,9 +142,9 @@ app.whenReady().then(async () => {
     notify: (snapshot) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send('spotify:changed', snapshot); },
   });
   await spotify.init();
-  if (!spotify.config.clientId && process.env.SPOTIFY_CLIENT_ID) spotify.config.clientId = process.env.SPOTIFY_CLIENT_ID;
+  if (!spotify.config.clientId) spotify.config.clientId = process.env.SPOTIFY_CLIENT_ID || build.spotifyClientId || '';
   const handleSpotify = (name, fn) => ipcMain.handle(`spotify:${name}`, async (event, ...args) => {
-    if (event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== page) throw new Error('Spotify is available only in the desktop window.');
+    trusted(event);
     try { return { value: await fn(...args) }; }
     catch (error) { return { error: error.message, status: error.status ?? 0, retryAt: error.retryAt ?? 0 }; }
   });
@@ -139,22 +166,21 @@ app.whenReady().then(async () => {
   handleSpotify('external', (url) => spotify.external(url));
   capture = new SpotifyCapture({ sameMac: () => spotify.config.sameMac && !!spotify.tokens, send: (type, data) => { if (captureOwner && !captureOwner.isDestroyed()) captureOwner.send(`capture:${type}`, data); } });
   ipcMain.handle('capture:start', (event) => {
-    if (event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== page) throw new Error('Capture is available only in Music.');
+    trusted(event);
     captureOwner = event.sender; return capture.start();
   });
-  ipcMain.handle('capture:stop', (event) => { if (captureOwner === event.sender) capture.stop(); });
+  ipcMain.handle('capture:stop', (event) => { trusted(event); if (captureOwner === event.sender) capture.stop(); });
   ipcMain.on('capture:ack', (event, sequence) => { if (captureOwner === event.sender) capture.ack(sequence); });
   // a frame can't be added to or removed from an open window, so the window is built anew for it
   async function open(bounds, maximized) {
-    const desktop = {
-      url: local, username: st.username, password: st.password, frame: st.frame,
-      share: { webPort: st.webPort, port: st.port, password: st.sharePassword },
-    };
     const win = new BrowserWindow({
-      frame: st.frame, show: false, backgroundColor: '#000', ...bounds,
-      webPreferences: { backgroundThrottling: false, preload: path.join(here, 'preload.bundle.cjs'), additionalArguments: [`--desktop=${JSON.stringify(desktop)}`] },
+      width: 980, height: 760, minWidth: 360, minHeight: 560,
+      title: `${build.channel === 'preview' ? 'Music Preview' : 'Music'} · ${config.label || profile.name}`,
+      frame: st?.frame ?? true, show: false, backgroundColor: '#18181b', ...bounds,
+      webPreferences: { backgroundThrottling: false, preload: path.join(here, 'preload.bundle.cjs') },
     });
     const contents = win.webContents;
+    win.on('page-title-updated', event => event.preventDefault());
     if (process.env.MUSIC_DIAGNOSTICS === '1') {
       contents.on('console-message', event => { if (event.message?.startsWith('[music-metrics]') || event.level === 'error') console.log(event.message, event.sourceId, event.lineNumber); });
       contents.once('did-finish-load', () => void contents.executeJavaScript(`(() => {
@@ -178,25 +204,150 @@ app.whenReady().then(async () => {
     return win;
   }
   // the old window closes only once the new one shows, so the app never has no window (which would quit it)
-  ipcMain.handle('set-frame', async (e, on) => {
-    const old = BrowserWindow.fromWebContents(e.sender);
+  const handleDesktop = (name, fn) => ipcMain.handle(`desktop:${name}`, async (event, ...args) => {
+    trusted(event);
+    try { return { value: await fn(event, ...args) }; }
+    catch (error) { return { error: error.message }; }
+  });
+  handleDesktop('status', () => desktopStatus());
+  handleDesktop('lan-ip', () => lanIp());
+  handleDesktop('choose-folder', async (event) => {
+    const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Choose your music folder', defaultPath: config.musicFolder || app.getPath('music'), properties: ['openDirectory'] });
+    return result.canceled ? null : result.filePaths[0];
+  });
+  handleDesktop('finish-setup', () => {
+    if (phase !== 'ready') throw new Error('Wait for your library to finish starting.');
+    config.setupComplete = true; saveProfile(profile, config); changed(); return desktopStatus();
+  });
+  handleDesktop('profiles', () => listProfiles(profile));
+  handleDesktop('show-data', () => shell.openPath(profile.directory));
+  handleDesktop('restart', () => scheduleRelaunch(profile.existing ? ['--use-existing'] : ['--data-dir', profile.root, '--profile', profile.name]));
+  handleDesktop('switch-profile', async (event, mode, name) => {
+    if (startPromise || switchingProfile) throw new Error('Wait for the current operation to finish.');
+    switchingProfile = true;
+    try {
+      let target;
+      if (mode === 'existing') {
+        const result = await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender), {
+          type: 'warning', message: 'Open your normal Music profile?', detail: 'Quit the other version first. This preview will write to your normal library data. A copied profile keeps those changes separate.', buttons: ['Cancel', 'Use existing profile'], defaultId: 0, cancelId: 0,
+        });
+        if (result.response !== 1) return;
+        scheduleRelaunch(['--use-existing']); return;
+      }
+      if (mode === 'fresh') target = newProfile(profile);
+      else if (mode === 'copy') {
+        if (profile.existing) throw new Error('Open an isolated preview and quit Music before copying its profile.');
+        target = newProfile(profile, 'copy');
+        const source = { ...profile, directory: profile.existingDirectory, existing: true, name: 'existing' };
+        const credentials = readJSON(path.join(source.directory, 'navidrome', 'credentials.json'), {});
+        if ((credentials.port && !(await isFree(credentials.port))) || (credentials.webPort && !(await isFree(credentials.webPort)))) throw new Error('Quit Music before copying its profile, then try again.');
+        await copyProfile(source, target, app.getPath('music'));
+      } else if (mode === 'continue') {
+        target = selectedProfile(profile, name);
+        if (!existsSync(path.join(target.directory, 'profile.json'))) throw new Error('This profile is no longer available. Choose another one or start fresh.');
+        assertProfileClosed(target.directory);
+      } else throw new Error('Choose Fresh, Copy existing, or an available profile.');
+      rememberProfile(target);
+      scheduleRelaunch(['--data-dir', profile.root, '--profile', target.name]);
+    } finally { switchingProfile = false; }
+  });
+  handleDesktop('set-frame', async (event, on) => {
+    if (!st) return;
+    const old = BrowserWindow.fromWebContents(event.sender);
     st.frame = !!on; save(dataDir, st);
     await open(old.getNormalBounds(), old.isMaximized());
-    old.destroy();
+    old.destroy(); changed();
   });
-  await waitFor(`${local}/rest/ping`);
-  await open({}, true);
-  void spotify.refreshLibrary();
-});
-
-let databaseClosed = false;
-app.on('before-quit', (event) => {
-  if (musicDatabase && !databaseClosed) {
-    event.preventDefault();
-    databaseClosed = true;
-    void musicDatabase.close().catch(error => console.error('Music database:', error.message)).finally(() => app.quit());
-    return;
+  async function start(options = {}) {
+    if (phase === 'ready') return desktopStatus();
+    if (startPromise) return startPromise;
+    const task = (async () => {
+      try {
+        if (options.source && !['folder', 'spotify', 'empty'].includes(options.source)) throw new Error('Choose a music folder or Spotify.');
+        if (options.source === 'folder') {
+          if (typeof options.musicFolder !== 'string' || !path.isAbsolute(options.musicFolder) || !statSync(options.musicFolder).isDirectory()) throw new Error('Choose an available music folder.');
+          config.musicFolder = options.musicFolder; config.source = 'local';
+        } else if (options.source) { config.musicFolder = ''; config.source = options.source; }
+        if (config.musicFolder && !existsSync(config.musicFolder)) throw new Error('Your music folder is unavailable. Reconnect its drive or choose another folder.');
+        phase = 'starting'; startupError = ''; changed();
+        // An older build does not take our profile lock. Its saved listening ports
+        // provide a conservative guard against opening its live databases.
+        if (profile.existing) {
+          const old = readJSON(path.join(dataDir, 'credentials.json'), {});
+          if ((old.port && !(await isFree(old.port))) || (old.webPort && !(await isFree(old.webPort)))) throw new Error('Another Music version is using this profile. Quit it before continuing.');
+        }
+        const music = config.musicFolder || path.join(profile.directory, 'empty-music');
+        mkdirSync(music, { recursive: true, mode: 0o700 });
+        st = await state(dataDir); local = `http://127.0.0.1:${st.port}`;
+        const child = spawn(navidromeBin, [], {
+          stdio: 'inherit', env: { ...process.env, ND_ADDRESS: '0.0.0.0', ND_PORT: String(st.port), ND_DATAFOLDER: dataDir, ND_CACHEFOLDER: path.join(dataDir, 'cache'), ND_MUSICFOLDER: music,
+            ND_DEVAUTOCREATEADMINPASSWORD: st.password, ND_ENABLEINSIGHTSCOLLECTOR: 'false', ND_SCANSCHEDULE: '1h', ND_LOGLEVEL: 'warn' },
+        });
+        navidrome = child;
+        child.on('error', error => { startupError = `Cannot start the bundled music server: ${error.message}`; phase = 'error'; changed(); });
+        child.on('exit', code => { if (!app.isQuitting && phase === 'ready') { startupError = `The music server stopped (exit ${code}). Restart Music to reconnect.`; phase = 'error'; changed(); } });
+        await waitFor(`${local}/rest/ping`, child);
+        frontendServer = serveFrontend(st.webPort);
+        musicDatabase = new MusicDatabase(path.join(profile.directory, 'music.sqlite'));
+        phase = 'ready';
+        if (options.source && options.source !== 'spotify') config.setupComplete = true;
+        saveProfile(profile, config); changed();
+        void spotify.refreshLibrary();
+        return desktopStatus();
+      } catch (error) {
+        await stopNavidrome();
+        phase = 'error'; startupError ||= error.message; changed(); throw new Error(startupError);
+      }
+    })();
+    startPromise = task;
+    try { return await task; }
+    finally { if (startPromise === task) startPromise = null; }
   }
-  app.isQuitting = true; capture?.stop(); spotify?.cancelLogin?.(); navidrome?.kill();
+  handleDesktop('start', (_event, options) => start(options));
+  handleDesktop('change-folder', async (event) => {
+    const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Choose your music folder', defaultPath: config.musicFolder || app.getPath('music'), properties: ['openDirectory'] });
+    if (result.canceled) return;
+    config.musicFolder = result.filePaths[0]; config.source = 'local'; config.setupComplete = true;
+    saveProfile(profile, config);
+    scheduleRelaunch(profile.existing ? ['--use-existing'] : ['--data-dir', profile.root, '--profile', profile.name]);
+  });
+  await open({}, config.setupComplete);
+  bootstrapping = false;
+  if (config.setupComplete) void start().catch(() => {});
+}).catch(error => { dialog.showErrorBox('Cannot open Music', error.message); app.quit(); });
+
+let switchingProfile = false;
+function scheduleRelaunch(args) {
+  app.relaunch({ execPath: process.env.APPIMAGE || process.execPath, args: [...(app.isPackaged ? [] : [app.getAppPath()]), ...args] });
+  // Let the invoking renderer receive its result before shutdown destroys it.
+  setTimeout(() => app.quit(), 150);
+}
+async function stopNavidrome() {
+  const child = navidrome;
+  navidrome = null;
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise(resolve => {
+    const timer = setTimeout(() => child.kill('SIGKILL'), 3000);
+    child.once('close', () => { clearTimeout(timer); resolve(); });
+    child.kill();
+  });
+}
+
+let shutdownComplete = false, shuttingDown = false;
+app.on('before-quit', event => {
+  if (shutdownComplete) return;
+  event.preventDefault();
+  if (shuttingDown) return;
+  shuttingDown = true; app.isQuitting = true;
+  capture?.stop(); spotify?.cancelLogin?.();
+  void (async () => {
+    await musicDatabase?.close().catch(error => console.error('Music database:', error.message));
+    await spotify?.writeTail;
+    await stopNavidrome();
+    frontendServer?.close();
+    if (app.isReady() && hasInstanceLock) electronSession.defaultSession.flushStorageData();
+  })().finally(() => { shutdownComplete = true; app.quit(); });
 });
-app.on('window-all-closed', () => app.quit());
+// Keep stale PID locks after crashes/exit. A new process reclaims them only when
+// the former owner is gone, including Chromium's final storage flush.
+app.on('window-all-closed', () => { if (!bootstrapping) app.quit(); });

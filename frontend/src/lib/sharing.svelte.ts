@@ -8,7 +8,7 @@ const USER = 'share';
 // The password is stable per device: the desktop app stores it, the web app keeps it in localStorage.
 export async function shareLink() {
   const api = session.api!, base = session.base;
-  const d = window.desktop?.share;
+  const d = window.desktop ? (await window.desktop.status()).share : undefined;
   let password = d?.password ?? localStorage.getItem('share.password');
   const fresh = !password;
   if (!password) password = crypto.randomUUID().replace(/-/g, '');

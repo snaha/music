@@ -93,8 +93,9 @@ async function consumeColors() {
   colorRunning = false; catalog.colorsLoading = false;
 }
 $effect.root(() => {
-  $effect(() => { session.username; session.base; untrack(loadCatalog); });
+  $effect(() => { if (!session.api) return; session.username; session.base; untrack(loadCatalog); });
   $effect(() => {
+    if (!session.api) return;
     listeningHistory.total; listeningHistory.persistedRevision; session.username; session.base;
     const revision = ++statsRevision;
     const timer = setTimeout(async () => {

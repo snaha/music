@@ -1,18 +1,20 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { keyboardScope } from './keyboard';
   import Button from './ui/button.svelte';
   import SpotifySettings from './SpotifySettings.svelte';
+  import ProfileSettings from './ProfileSettings.svelte';
+  import { desktop } from './desktop.svelte';
   import { session } from './api.svelte';
   import { library } from './library.svelte';
   import { downloadPlaybackLog } from './playback-log';
   import { capture, enableCapture } from './spotify-visualizer.svelte';
   import { bg, clearBackground, importBackground } from './background.svelte';
 
-  let { art = $bindable(), motion = $bindable(), onclose }: { art: boolean; motion: boolean; onclose: () => void } = $props();
+  let { art = $bindable(), motion = $bindable(), initialTab = 'appearance', onclose }: { art: boolean; motion: boolean; initialTab?: string; onclose: () => void } = $props();
   let dialog = $state<HTMLDialogElement>(null!);
   let content = $state<HTMLDivElement>(null!);
-  let activeTab = $state('appearance');
+  let activeTab = $state(untrack(() => initialTab));
   let paste = $state(''), bad = $state(false);
   let backgroundFile = $state<HTMLInputElement>(null!);
   const tabs = [
@@ -103,7 +105,8 @@
         <section class="advanced" aria-labelledby="advanced-title">
           <h2 id="advanced-title">Advanced &amp; network</h2>
           {#if window.desktop}
-            <label><input type="checkbox" checked={window.desktop.frame} onchange={(event) => window.desktop!.setFrame(event.currentTarget.checked)} /> Native window frame</label>
+            <ProfileSettings portalTarget={dialog} />
+            <label><input type="checkbox" checked={desktop.status?.frame ?? true} onchange={(event) => window.desktop!.setFrame(event.currentTarget.checked)} /> Native window frame</label>
           {/if}
           <div class="server">
             <span class="k">Server</span>

@@ -43,6 +43,7 @@ export async function selectSpotifyDevice(id: string, sameMac: boolean) {
 export function spotifyPlayable() { return !!window.spotify && spotify.connected && spotify.availability === 'ready'; }
 export function spotifyDimmed() { return ['disconnected', 'reconnect', 'offline', 'restricted'].includes(spotify.availability); }
 export function spotifyMessage() {
+  if (spotify.availability === 'disconnected' && !spotify.albums.length && !spotify.collections.length) return 'Spotify not connected';
   return { checking: 'Checking Spotify output…', ready: 'Spotify ready', disconnected: 'Spotify disconnected · showing saved library',
     reconnect: 'Reconnect Spotify to play · showing saved library', offline: 'Spotify offline · showing saved library',
     'device-unavailable': 'Spotify playback output unavailable', restricted: 'Spotify access restricted · check Premium and app access' }[spotify.availability];

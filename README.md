@@ -69,13 +69,20 @@ sudo apt install ./music-desktop_*_amd64.deb
 
 ## First start
 
-- The app uses your system's Music folder, for example `~/Music`. If that folder doesn't exist, it asks you to
-  choose one.
+- Fresh startup offers **Choose folder**, **Connect Spotify**, or **Explore first**. Music scans the folder you select without moving its files. Existing installations keep their current library.
 - It reads your whole collection the first time. Albums appear while it works, and a counter at the bottom
   shows how many songs it has found. Large collections can take several minutes.
 - To play on a phone, open the menu in the bottom-right corner, choose **Share**, and scan the QR code with a
   phone on the same Wi-Fi.
 - Ctrl+Q quits the app, or Cmd+Q on macOS.
+
+## Preview builds
+
+Previews have their own library and preferences. You can start fresh, copy an existing Music profile after quitting it, or continue a previous preview. Settings → Advanced → Library & profile shows the active build and lets you switch profiles or choose a music folder.
+
+A portable download keeps its profiles inside an adjacent `Data` folder. Extract the whole archive and use **Open Music.command** (Mac) or **Open Music.sh** (Linux). Keep Data when updating; duplicate the complete folder to compare builds independently. Spotify may need reconnecting on another computer.
+
+For publishing branch previews and signing configuration, see the [desktop distribution guide](desktop/README.md#share-a-preview-with-github-actions).
 
 ## Troubleshooting
 

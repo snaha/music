@@ -1,3 +1,12 @@
+type DesktopProfile = { name: string; label: string; directory: string; existing: boolean; portable: boolean };
+type DesktopStatus = {
+  phase: 'setup' | 'starting' | 'ready' | 'error'; error: string; onboarding: boolean;
+  url: string; username: string; password: string; frame: boolean;
+  share?: { webPort: number; port: number; password: string };
+  build: { version: string; channel: string; commit: string; branch: string; builtAt: string; runUrl: string };
+  profile: DesktopProfile; musicFolder: string; source: string; canCopy: boolean;
+};
+type ProfileEntry = { name: string; label: string; createdAt: number; setupComplete: boolean };
 // injected by the Electron preload (desktop/preload.js)
 interface Window {
   musicHistory?: {
@@ -14,11 +23,17 @@ interface Window {
   };
   spotify?: import('./lib/music').SpotifyBridge;
   desktop?: {
-    url: string; username: string; password: string;
-    // ports and the share account's password for the QR code; the LAN address is looked up on demand
-    share?: { webPort: number; port: number; password: string };
+    status: () => Promise<DesktopStatus>;
+    start: (options?: { source?: 'folder' | 'spotify' | 'empty'; musicFolder?: string }) => Promise<DesktopStatus>;
+    chooseFolder: () => Promise<string | null>;
+    finishSetup: () => Promise<DesktopStatus>;
+    profiles: () => Promise<ProfileEntry[]>;
+    switchProfile: (mode: 'fresh' | 'copy' | 'continue' | 'existing', name?: string) => Promise<void>;
+    showData: () => Promise<string>;
+    changeFolder: () => Promise<void>;
+    restart: () => Promise<void>;
+    onChange: (callback: (status: DesktopStatus) => void) => () => void;
     lanIp: () => Promise<string>;
-    frame: boolean; // the OS's window frame and buttons are shown
     setFrame: (on: boolean) => Promise<void>; // reopens the window with or without it
   };
 }
