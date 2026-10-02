@@ -7,6 +7,7 @@
   import Login from './lib/Login.svelte';
   import Grid from './lib/Grid.svelte';
   import Visualizer from './lib/Visualizer.svelte';
+  import { bg } from './lib/background.svelte';
 
   let ready = $state(false), idle = $state(false), hint = $state(false);
   let idleTimer: ReturnType<typeof setTimeout>;
@@ -44,7 +45,9 @@
     <span><b>space</b> play</span><span><b>← →</b> track</span><span><b>?</b> help</span>
   </div>
   <Bar hidden={idle} />
-  {#if player.visOpen}<Visualizer />{/if}
+  <!-- one visualizer for both places: behind the grid as the background material, and fullscreen. Opening it fullscreen
+    carries on from the picture the background shows -->
+  {#if player.visOpen || bg.material === 'viz'}<Visualizer background={!player.visOpen} />{/if}
 {/if}
 
 <style>
