@@ -34,7 +34,9 @@ export type Order = 'normal' | 'shuffle' | 'random';
 // the songs the grid shows, numbered 0..count-1 across its tiles; `key` changes when the grid's contents do
 export type Grid = { count: number; key: string; find(albumId: string): number; song(n: number): Promise<Child | undefined> };
 
-let perm = new Uint32Array(0), cursor = -1, gridKey = '';
+// typed as the generic Uint32Array: TypeScript 5.7+ infers `new Uint32Array(0)` as backed by an ArrayBuffer only,
+// which the arrays shuffle() returns are not assignable to
+let perm: Uint32Array = new Uint32Array(0), cursor = -1, gridKey = '';
 let grid: (() => Grid) | undefined;
 
 function start(i: number) { player.index = i; load(); }
