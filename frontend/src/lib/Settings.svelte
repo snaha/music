@@ -78,7 +78,7 @@
       {#if activeTab === 'appearance'}
         <section aria-labelledby="appearance-title">
           <h2 id="appearance-title">Appearance</h2>
-          <label><input type="checkbox" bind:checked={art} /> With art</label>
+          <label><input type="checkbox" bind:checked={art} /> Show artwork</label>
           <label><input type="checkbox" bind:checked={motion} /> Motion</label>
           {#if window.spotify}
             <label><input type="checkbox" bind:checked={library.highlight} /> Highlight Spotify and local sources</label>

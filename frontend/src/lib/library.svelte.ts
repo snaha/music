@@ -1,4 +1,4 @@
-import type { AlbumID3, Child, Playlist } from 'subsonic-api';
+import type { AlbumID3, Child, Playlist, ScanStatus } from 'subsonic-api';
 import { coverUrl, ok, session } from './api.svelte';
 import { appendToSession, enqueue, play, player, type Grid } from './player.svelte';
 import { spotify, spotifyPlayable, spotifyMessage } from './spotify.svelte';
@@ -8,7 +8,8 @@ export type Tile = Collection;
 export const MODES = ['albums', 'playlists'] as const;
 export type Mode = (typeof MODES)[number];
 export const library = $state({ mode: 'albums' as Mode, tiles: [] as Tile[], visible: [] as Tile[], loading: false,
-  error: '', source: 'all' as 'all' | 'local' | 'spotify', highlight: false, scan: { scanning: false, count: 0 } });
+  error: '', source: 'all' as 'all' | 'local' | 'spotify', highlight: false,
+  scan: { scanning: false, count: 0, checked: false, error: '' } });
 let localTiles: Tile[] = [], req = 0, pickRequest = 0, listing = true;
 
 export const album = (a: AlbumID3): Tile => ({ id: localId('album', a.id), rawId: a.id, source: 'local', cover: coverUrl(a.coverArt), title: a.name, sub: a.artist ?? '', kind: 'album', count: a.songCount ?? 1, available: true, addedAt: a.created ? new Date(a.created).toISOString() : undefined, favorite: !!a.starred, year: a.year, genres: a.genre ? [a.genre] : [] });
@@ -64,22 +65,42 @@ async function warmCovers() {
     while (todo.length && gen === warmGen) { const u = todo.shift()!; await preload(u); warmed.add(u); }
   }));
 }
-let wasScanning = false, tick = 0;
+// Navidrome extends the Subsonic scan status with completion and failure details.
+type LibraryScanStatus = ScanStatus & { lastScan?: string | Date; error?: string };
 export function watchScan() {
-  let busy = false;
+  let busy = false, stopped = false, lastApi: typeof session.api = null;
+  let previous: { scanning: boolean; count: number; lastScan: string } | undefined;
+  let refreshPending = false, lastRefresh = Number.NEGATIVE_INFINITY;
   const timer = setInterval(async () => {
-    if (!session.api || busy) return;
+    if (busy) return;
+    const api = session.api;
+    if (api !== lastApi) {
+      lastApi = api; previous = undefined; refreshPending = false; lastRefresh = Number.NEGATIVE_INFINITY;
+      library.scan = { scanning: false, count: 0, checked: false, error: '' };
+    }
+    if (!api) return;
     busy = true;
     try {
-      const s = ok(await session.api.getScanStatus()).scanStatus;
-      library.scan = { scanning: s.scanning, count: s.count ?? 0 };
-      const due = !s.scanning || tick++ % 5 === 0;
-      if (listing && (s.scanning || wasScanning) && due) void setMode(library.mode, true);
-      wasScanning = s.scanning;
-    } catch { /* the login and player surfaces report connection failures */ }
+      const s: LibraryScanStatus = ok(await api.getScanStatus()).scanStatus;
+      if (stopped || api !== session.api) return;
+      const next = { scanning: s.scanning, count: s.count ?? 0, lastScan: String(s.lastScan ?? '') };
+      library.scan = { scanning: next.scanning, count: next.count, checked: true,
+        error: s.error ? `Music indexing failed: ${s.error}` : '' };
+      // A small scan can finish before the first poll, or entirely between polls.
+      // Refresh the first snapshot and any completed scan, even without seeing it start.
+      if (!previous || previous.count !== next.count || previous.lastScan !== next.lastScan || (previous.scanning && !next.scanning)) refreshPending = true;
+      previous = next;
+      const now = performance.now();
+      if (listing && !library.loading && (!next.scanning ? refreshPending : now - lastRefresh >= 5000)) {
+        refreshPending = false; lastRefresh = now;
+        await setMode(library.mode, true);
+      }
+    } catch (error) {
+      if (!stopped && api === session.api) library.scan.error = `Cannot check music indexing: ${(error as Error).message}`;
+    }
     finally { busy = false; }
   }, 1000);
-  return () => clearInterval(timer);
+  return () => { stopped = true; clearInterval(timer); };
 }
 
 const rnd = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];

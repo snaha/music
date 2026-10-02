@@ -32,7 +32,8 @@
   let advancedLayout = $state(false);
   function resizeGrid(value: number) { cols = 11 - value; gap = Math.round(24 + cols * 8); }
   let gap = $state(Number(localStorage.getItem('grid.gap') ?? 48));
-  let art = $state(localStorage.getItem('art') !== '0');
+  // The former `art` preference filtered out albums without covers; it did not hide images.
+  let art = $state(localStorage.getItem('artwork.visible') !== '0');
   let motion = $state(localStorage.getItem('motion') === '1'); // off by default
   type BarMode = 'library' | 'filters' | 'layout' | 'look' | 'theme';
   function closeModes() {
@@ -45,7 +46,7 @@
   library.highlight = localStorage.getItem('library.highlight') === '1';
   $effect(() => {
     localStorage.setItem('grid.cols', String(cols)); localStorage.setItem('grid.gap', String(gap));
-    localStorage.setItem('art', art ? '1' : '0'); localStorage.setItem('motion', motion ? '1' : '0');
+    localStorage.setItem('artwork.visible', art ? '1' : '0'); localStorage.setItem('motion', motion ? '1' : '0');
     localStorage.setItem('library.source', library.source); localStorage.setItem('library.highlight', library.highlight ? '1' : '0');
   });
   let query = $state('');
@@ -99,8 +100,7 @@
   let orderKey = '', tileOrder: string[] = [];
   let shown = $derived.by(() => {
     const words = normalize(query).trim().split(/\s+/).filter(Boolean);
-    const result = sourceTiles.filter((t) => (!art || t.cover || t.source === 'spotify' || t.id === activeId) &&
-      (!favoritesOnly || metadata(t).favorite) && (!artistFilter || t.sub === artistFilter) &&
+    const result = sourceTiles.filter((t) => (!favoritesOnly || metadata(t).favorite) && (!artistFilter || t.sub === artistFilter) &&
       (showFilter !== 'favorites' || metadata(t).favorite) && (!showFilter.startsWith('genre:') || metadata(t).genres.includes(showFilter.slice(6))) &&
       (showFilter !== 'mood' || !!catalog.items[t.id]?.traits) && digScore(t) > 0 && words.every((word) => normalize(`${t.title} ${t.sub} ${metadata(t).genres.join(' ')}`).includes(word)));
     if (sort === 'recent') result.sort((a, b) => (b.addedAt ?? '').localeCompare(a.addedAt ?? ''));
@@ -113,7 +113,7 @@
     if (sortDirection === -1 && sort !== 'random') result.reverse();
     if (digActive()) result.sort((a, b) => digScore(b) - digScore(a));
     // Background discovery replaces existing covers in place; new matches append until the next explicit filter/sort.
-    const key = JSON.stringify([library.mode, library.source, query, artistFilter, sort, sortDirection, sortRevision, randomSeed, showFilter, favoritesOnly, art, dig.moodOn, dig.mood, dig.energy, dig.familiarity, dig.acoustic, dig.vocal]);
+    const key = JSON.stringify([library.mode, library.source, query, artistFilter, sort, sortDirection, sortRevision, randomSeed, showFilter, favoritesOnly, dig.moodOn, dig.mood, dig.energy, dig.familiarity, dig.acoustic, dig.vocal]);
     if (key !== orderKey) { orderKey = key; tileOrder = result.map(t => t.id); }
     else {
       const known = new Set(tileOrder), matches = new Map(result.map(t => [t.id, t]));
@@ -125,7 +125,7 @@
   function filterChanged() { scrollTop = 0; details = null; player.queueOpen = false; player.view = ''; scroller?.scrollTo({ top: 0 }); }
   function changeMode(mode: Mode) { artistFilter = ''; favoritesOnly = false; filterChanged(); void setMode(mode); }
   function changeSource() { artistFilter = ''; filterChanged(); }
-  function resetFilters() { query = ''; artistFilter = ''; library.source = 'all'; sort = 'title'; sortDirection = 1; showFilter = 'all'; favoritesOnly = false; art = false; resetDig(); filterChanged(); }
+  function resetFilters() { query = ''; artistFilter = ''; library.source = 'all'; sort = 'title'; sortDirection = 1; showFilter = 'all'; favoritesOnly = false; resetDig(); filterChanged(); }
   $effect(() => { library.visible = searching ? catalogSearch.collections : shown; });
 
   let viewportWidth = $state(innerWidth), viewportHeight = $state(innerHeight), scrollTop = $state(0);
@@ -250,7 +250,7 @@
       {@const playback = collectionPlayback(t)}
       <div class="tile-wrap" class:source-highlight={library.highlight} class:spotify-tile={t.source === 'spotify'} class:discovered={t.id === discoveryId} class:current={playback.current} class:listening={playback.listening}>
         <button class="tile" class:unavailable-art={t.source === 'spotify' && (spotifyDimmed() || !t.available)} class:active={playback.listening} onclick={() => { details = t; player.queueOpen = false; player.view = ''; }} aria-label="Open {t.title} — {t.sub}" aria-current={playback.current ? 'true' : undefined}>
-          {#if t.cover}<img src={t.cover} alt="" loading="lazy" draggable="false" />{:else}<span class="fallback">{t.title}</span>{/if}
+          {#if art && t.cover}<img src={t.cover} alt="" loading="lazy" draggable="false" />{:else}<span class="fallback">{t.title}</span>{/if}
         </button>
         <div class="tile-play"><CollectionPlayback collection={t} compact onplay={() => { if (!t.available || (t.source === 'spotify' && !spotifyPlayable())) details = t; else pick(t); }} /></div>
         {#if t.source === 'spotify' && (!spotifyPlayable() || !t.available)}<span class="availability-badge" title={access?.detail || spotifyMessage()}>{access?.label || spotifyRecoveryLabel()}</span>{/if}
@@ -298,6 +298,10 @@
       <h2>Your music starts here.</h2>
       <p>Choose a music folder or connect Spotify to fill your collection.</p>
       <button onclick={chooseMusicFolder}>Choose music folder</button><button onclick={spotifySettings}>Connect Spotify</button>
+    {:else if window.desktop && desktop.status?.musicFolder && !library.tiles.length && library.mode === 'albums' && library.source !== 'spotify'}
+      <p>{library.scan.error || library.error ? 'Your music folder could not be loaded.' : !library.scan.checked ? 'Checking your music folder…' : library.scan.scanning ? 'Your collection is being indexed. Albums will appear here as they’re found.' : 'No music was found in this folder.'}</p>
+      <p style:overflow-wrap="anywhere">{desktop.status.musicFolder}</p>
+      <button onclick={chooseMusicFolder}>Choose music folder</button>
     {:else}
       <p>{library.scan.scanning ? 'Your collection is being indexed. Albums will appear here as they’re found.' : library.source === 'spotify' && !spotify.connected ? 'Connect Spotify to see your albums, likes and playlists.' : 'No music matches this view.'}</p>
       {#if digActive()}<p>Add mood and sound tags from an album’s menu, or clear Dig to see all music.</p><button onclick={resetDig}>Clear Dig</button>{:else if !library.scan.scanning}<button onclick={resetFilters}>Reset filters</button>{/if}
@@ -312,7 +316,7 @@
 {#if spotify.indexError}<div class="library-status" role="alert">Album discovery paused: {spotify.indexError} Refresh Spotify in Settings to retry.</div>{/if}
 {#if library.mode === 'playlists' && spotify.inaccessiblePlaylists > 0}<p class="playlist-note">Cards marked “Spotify only” open details with a link to Spotify. Their song lists are restricted, so Music cannot add them to your queue.</p>{/if}
 {#if currentDetails}{#key currentDetails.id}<CollectionDetails tile={currentDetails} onclose={() => (details = null)} />{/key}{/if}
-{#if library.error}<div class="library-status" role="alert">{library.error}</div>{/if}
+{#if library.error || library.scan.error}<div class="library-status" role="alert">{library.error || library.scan.error}</div>{/if}
 
 {#if player.view === 'settings'}<Settings bind:art bind:motion initialTab={settingsTab} onclose={() => (player.view = '')} />{/if}
 
