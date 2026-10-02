@@ -1,13 +1,15 @@
 name: desktop
 on:
   workflow_dispatch:
-  pull_request:   # preview builds, attached to the run
+  pull_request:   # preview builds, published as a pr-<number> pre-release linked from the PR
+    types: [opened, synchronize, reopened, closed]
   push:
     tags: ['v*']
 permissions:
   contents: write   # publish the release
 jobs:
   mac:
+    if: github.event.action != 'closed'
     runs-on: macos-14   # Apple Silicon
     steps:
       - uses: actions/checkout@v4
@@ -19,12 +21,16 @@ jobs:
         working-directory: frontend
       - run: pnpm install --frozen-lockfile
         working-directory: desktop
+      # a PR build is its own app ("Music pr-12", own app id and data folder) so it installs next to the real one
+      - if: github.event_name == 'pull_request'
+        run: jq --arg n "pr-${{ github.event.number }}" '.name += "-" + $n | .productName += " " + $n | .build.appId += "." + $n' package.json > p.json && mv p.json package.json
+        working-directory: desktop
       - run: pnpm navidrome && pnpm build:frontend
         working-directory: desktop
       # unsigned build: assemble the app, ad-hoc sign it (required on Apple Silicon), then package dmg + zip
       - run: |
           pnpm pack:mac:dir
-          codesign --force --deep --sign - "release/mac-arm64/Music.app"
+          codesign --force --deep --sign - release/mac-arm64/*.app
           pnpm pack:mac
         working-directory: desktop
         env: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
@@ -35,6 +41,7 @@ jobs:
             desktop/release/*.dmg
             desktop/release/*.zip
   linux:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +52,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
         working-directory: frontend
       - run: pnpm install --frozen-lockfile
+        working-directory: desktop
+      # a PR build is its own app ("Music pr-12", own app id and data folder) so it installs next to the real one
+      - if: github.event_name == 'pull_request'
+        run: jq --arg n "pr-${{ github.event.number }}" '.name += "-" + $n | .productName += " " + $n | .build.appId += "." + $n' package.json > p.json && mv p.json package.json
         working-directory: desktop
       - run: pnpm dist   # navidrome + frontend + AppImage and deb
         working-directory: desktop
@@ -63,4 +74,37 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { path: release, merge-multiple: true }
       - run: gh release create "$GITHUB_REF_NAME" release/* --generate-notes
+        env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+  # a PR build replaces the PR's pr-<number> pre-release and keeps one comment on the PR pointing at it
+  preview:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository   # fork PRs get a read-only token
+    needs: [mac, linux]
+    runs-on: ubuntu-latest
+    permissions: { contents: write, pull-requests: write }
+    concurrency: preview-${{ github.event.number }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: release, merge-multiple: true }
+      - run: |
+          gh release delete "pr-$PR" --cleanup-tag --yes || true
+          gh release create "pr-$PR" release/* --prerelease --latest=false --target "$SHA" --title "Preview of PR #$PR" \
+            --notes "Built from ${SHA::7}. Installs as **Music pr-$PR** next to the regular app, with its own library. Builds are unsigned: on a Mac, right-click the app and choose Open the first time."
+          {
+            echo "### Preview build for ${SHA::7}"
+            echo "Installs as **Music pr-$PR** next to the regular app. All files: $(gh release view "pr-$PR" --json url -q .url)"
+            echo
+            gh release view "pr-$PR" --json assets -q '.assets[] | "- [\(.name)](\(.url))"'
+          } > comment.md
+          gh pr comment "$PR" --edit-last --body-file comment.md || gh pr comment "$PR" --body-file comment.md
+  # closing the PR removes its preview
+  preview-cleanup:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh release delete "pr-${{ github.event.number }}" --cleanup-tag --yes || true
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
