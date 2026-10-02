@@ -9,15 +9,26 @@
   import Grid from './lib/Grid.svelte';
   import Visualizer from './lib/Visualizer.svelte';
   import { initSpotify, spotify } from './lib/spotify.svelte';
+  import Startup from './lib/Startup.svelte';
+  import { desktop, initDesktop } from './lib/desktop.svelte';
 
   let ready = $state(false), idle = $state(false);
   let idleTimer: ReturnType<typeof setTimeout>;
 
-  onMount(() => { restore().finally(() => (ready = true)); return watchScan(); });
+  onMount(() => { if (!window.desktop) restore().finally(() => (ready = true)); return watchScan(); });
+  onMount(initDesktop);
   onMount(initSpotify);
   onMount(() => { wake(); return () => clearTimeout(idleTimer); });
   $effect(() => { if (session.api) untrack(() => setMode('albums')); });
   $effect(() => { spotify.collections; spotify.albums; spotify.connected; untrack(updateSpotifyCollections); });
+  let attempted = false;
+  function connectDesktop() {
+    attempted = true; desktop.error = '';
+    void restore().then(() => { ready = true; }).catch(error => { desktop.error = error.message; });
+  }
+  $effect(() => {
+    if (desktop.status?.phase === 'ready' && !desktop.status.onboarding && !attempted) untrack(connectDesktop);
+  });
 
   // any pointer activity (mouse move, tap, touch scroll) shows the bars; they fade again after a pause
   function wake() { idle = false; player.topHidden = false; clearTimeout(idleTimer); idleTimer = setTimeout(() => (idle = true), 2500); }
@@ -74,7 +85,9 @@
 
 <svelte:window onkeydown={onkeydown} onpointermove={wake} onpointerdown={wake} />
 
-{#if !ready}
+{#if window.desktop && (!ready || desktop.status?.phase !== 'ready' || desktop.status?.onboarding)}
+  <Startup onretry={connectDesktop} />
+{:else if !ready}
   <!-- black until we know whether a session exists -->
 {:else if !session.api}
   <Login />

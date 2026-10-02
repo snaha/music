@@ -21,6 +21,7 @@
   import { spotifyCollectionState } from './spotify-collection-state';
   import CollectionDetails from './CollectionDetails.svelte';
   import Settings from './Settings.svelte';
+  import { desktop } from './desktop.svelte';
   import Visualizer from './Visualizer.svelte';
   import { bg, importBackground, MATERIALS, randomBackground } from './background.svelte';
 
@@ -162,7 +163,13 @@
     controlsFocused = target instanceof Element && !!target.closest('.browse, .library-select-menu') && target.matches(':focus-visible');
     if (target instanceof Element && target.matches('[aria-label="Search library"]')) { details = null; toolbar.mode = 'library'; }
   }
-  function open(view: 'settings') { player.viewFrom = 'right'; player.view = rightView === view ? '' : view; closeModes(); }
+  let settingsTab = $state('appearance');
+  function open(view: 'settings') { settingsTab = 'appearance'; player.viewFrom = 'right'; player.view = rightView === view ? '' : view; closeModes(); }
+  function spotifySettings() { open('settings'); settingsTab = 'spotify'; }
+  async function chooseMusicFolder() {
+    try { await window.desktop!.changeFolder(); }
+    catch (error) { library.error = (error as Error).message; }
+  }
   function onmove(e: PointerEvent) {
     if (e.pointerType !== 'touch') {
       touch = false;
@@ -287,9 +294,15 @@
 
 {#if !searching && !shown.length && !library.loading && !spotify.syncing}
   <div class="empty-library">
-    <p>{library.source === 'spotify' && !spotify.connected ? 'Connect Spotify to see your albums, likes and playlists.' : 'No music matches this view.'}</p>
-    {#if digActive()}<p>Add mood and sound tags from an album’s menu, or clear Dig to see all music.</p><button onclick={resetDig}>Clear Dig</button>{:else}<button onclick={resetFilters}>Reset filters</button>{/if}
-    {#if library.source === 'spotify' && !spotify.connected}<button onclick={() => open('settings')}>Connect Spotify</button>{/if}
+    {#if window.desktop && !library.tiles.length && !desktop.status?.musicFolder && !spotify.connected}
+      <h2>Your music starts here.</h2>
+      <p>Choose a music folder or connect Spotify to fill your collection.</p>
+      <button onclick={chooseMusicFolder}>Choose music folder</button><button onclick={spotifySettings}>Connect Spotify</button>
+    {:else}
+      <p>{library.scan.scanning ? 'Your collection is being indexed. Albums will appear here as they’re found.' : library.source === 'spotify' && !spotify.connected ? 'Connect Spotify to see your albums, likes and playlists.' : 'No music matches this view.'}</p>
+      {#if digActive()}<p>Add mood and sound tags from an album’s menu, or clear Dig to see all music.</p><button onclick={resetDig}>Clear Dig</button>{:else if !library.scan.scanning}<button onclick={resetFilters}>Reset filters</button>{/if}
+      {#if library.source === 'spotify' && !spotify.connected}<button onclick={spotifySettings}>Connect Spotify</button>{/if}
+    {/if}
   </div>
 {/if}
 
@@ -301,7 +314,7 @@
 {#if currentDetails}{#key currentDetails.id}<CollectionDetails tile={currentDetails} onclose={() => (details = null)} />{/key}{/if}
 {#if library.error}<div class="library-status" role="alert">{library.error}</div>{/if}
 
-{#if player.view === 'settings'}<Settings bind:art bind:motion onclose={() => (player.view = '')} />{/if}
+{#if player.view === 'settings'}<Settings bind:art bind:motion initialTab={settingsTab} onclose={() => (player.view = '')} />{/if}
 
 <style>
   .scroll {
@@ -387,6 +400,9 @@
   .fallback { display: grid; place-items: center; height: 100%; padding: 16px; box-sizing: border-box; color: #ddd; text-align: center; }
   .empty-library { position: fixed; inset: 35% 10% auto; text-align: center; color: var(--ui-text); font: 16px/1.5 var(--ui-font); }
   .empty-library p + p { color: var(--ui-text-muted); font-size: 13px; } .empty-library button { color: inherit; background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: 4px; padding: 10px 14px; cursor: pointer; font: inherit; margin: 4px; }
+  .empty-library h2 { margin: 0 0 12px; font-size: 24px; font-weight: 600; letter-spacing: -.025em; }
+  .empty-library button { min-height: 44px; }
+  .empty-library button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
   .library-status, .scan, .playlist-note { position: fixed; left: 16px; bottom: 90px; max-width: min(650px, calc(100vw - 32px)); padding: 8px 12px; box-sizing: border-box; color: var(--ui-text); background: var(--ui-surface); z-index: 3; font: 12px/1.5 var(--ui-font); }
   @media (max-width: 1100px) { .inline-size { flex-basis: 100px; } .compact-bar { gap: 5px; padding-inline: 10px; } .compact-bar :global(.library-select-field) { width: 120px; min-width: 100px; } .collection-filter :global(.library-select-field) { width: 95px; min-width: 85px; } }
   @media (max-width: 700px) {

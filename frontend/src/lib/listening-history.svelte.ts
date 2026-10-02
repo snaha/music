@@ -15,7 +15,7 @@ const pendingClears = new Set<string>();
 const queuedContexts = new Map<string, Set<string>>();
 const unsaved = new Map<string, ReturnType<typeof snapshot>[]>();
 const scope = () => window.desktop ? `desktop:${session.username}` : key();
-const key = () => `music.history.v1:${session.base}:${session.username}`;
+const key = () => `music.history.v1:${window.desktop ? 'desktop' : session.base}:${session.username}`;
 
 // Keep signed local artwork URLs out of persisted history. Recreate them on use.
 function storedTrack(track: Track): Track {

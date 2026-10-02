@@ -1,7 +1,23 @@
-// hands the frontend the local server address and credentials so it can log in silently
+// Credentials and startup state are read after the selected profile is ready.
 import { contextBridge, ipcRenderer } from 'electron';
-const arg = process.argv.find((a) => a.startsWith('--desktop='));
-if (arg) contextBridge.exposeInMainWorld('desktop', { ...JSON.parse(arg.slice('--desktop='.length)), lanIp: () => ipcRenderer.invoke('lan-ip'), setFrame: (on) => ipcRenderer.invoke('set-frame', on) });
+const desktopCall = async (name, ...args) => {
+  const reply = await ipcRenderer.invoke(`desktop:${name}`, ...args);
+  if (reply.error) throw new Error(reply.error);
+  return reply.value;
+};
+contextBridge.exposeInMainWorld('desktop', {
+  status: () => desktopCall('status'), start: options => desktopCall('start', options),
+  chooseFolder: () => desktopCall('choose-folder'), finishSetup: () => desktopCall('finish-setup'),
+  profiles: () => desktopCall('profiles'), switchProfile: (mode, name) => desktopCall('switch-profile', mode, name),
+  showData: () => desktopCall('show-data'), changeFolder: () => desktopCall('change-folder'),
+  restart: () => desktopCall('restart'),
+  lanIp: () => desktopCall('lan-ip'), setFrame: on => desktopCall('set-frame', on),
+  onChange: callback => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('desktop:changed', listener);
+    return () => ipcRenderer.removeListener('desktop:changed', listener);
+  },
+});
 
 const call = async (name, ...args) => {
   const reply = await ipcRenderer.invoke(`spotify:${name}`, ...args);

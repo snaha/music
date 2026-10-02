@@ -2,7 +2,7 @@
   import LibrarySelect from './ui/library-select.svelte';
   import Button from './ui/button.svelte';
   import { connectSpotify, disconnectSpotify, refreshDevices, refreshSpotify, selectSpotifyDevice, spotify, removeSpotifyLibrary, spotifyMessage, checkSpotify } from './spotify.svelte';
-  let { portalTarget }: { portalTarget?: Element } = $props();
+  let { portalTarget, onboarding = false }: { portalTarget?: Element; onboarding?: boolean } = $props();
   const albums = $derived(spotify.albums.length);
   const playlists = $derived(spotify.collections.filter((t) => t.kind === 'playlist' && t.id !== 'spotify:liked').length);
   const hasLiked = $derived(spotify.collections.some((t) => t.id === 'spotify:liked'));
@@ -37,11 +37,22 @@
         </div>
       {/if}
     </div>
-    {#if !ready}<p role="status">{spotifyMessage()}</p>{/if}
+    {#if !ready && (!onboarding || spotify.connected)}<p role="status">{spotifyMessage()}</p>{/if}
     {#if !spotify.connected || spotify.availability === 'reconnect'}
       <p>Your albums, likes and playlists, played through Spotify Desktop.</p>
-      <label>Client ID <input type="text" bind:value={clientId} placeholder="Spotify developer app client ID" autocomplete="off" spellcheck="false" /></label>
-      <small>Register <code>http://127.0.0.1:8888/callback</code> in your Spotify developer app. No client secret is needed.</small>
+      {#if onboarding && spotify.clientId}
+        <details>
+          <summary>Spotify app configuration</summary>
+          <div class="detail-body">
+            <label>Client ID <input type="text" bind:value={clientId} placeholder="Spotify developer app client ID" autocomplete="off" spellcheck="false" /></label>
+            <small>The person sharing this preview must allow your account to use this Spotify app.</small>
+          </div>
+        </details>
+      {:else}
+        {#if onboarding}<p>This preview needs a Spotify app client ID. Ask the person who shared it, or use your own developer app.</p>{/if}
+        <label>Client ID <input type="text" bind:value={clientId} placeholder="Spotify developer app client ID" autocomplete="off" spellcheck="false" /></label>
+        <small>Register <code>http://127.0.0.1:8888/callback</code> in your Spotify developer app. No client secret is needed.</small>
+      {/if}
       <div class="actions">
         <Button variant="outline" disabled={spotify.connecting || !clientId} onclick={() => connectSpotify(clientId)}>{spotify.connecting ? 'Waiting for Spotify…' : 'Connect Spotify'}</Button>
         {#if spotify.connecting}<Button variant="outline" onclick={() => window.spotify!.cancel()}>Cancel</Button>{/if}

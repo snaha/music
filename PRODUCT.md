@@ -22,6 +22,10 @@ Browse the music catalog, find albums and songs, and control playback directly. 
 - Songs have separate playback and queue actions; artist results open their albums. Clearing search returns to the existing cover wall.
 - Known matches appear immediately; provider work settles in the background. New result groups append in their first-seen order, and updates preserve the visible result anchor, focus and queue. Explicit queries, type/source choices and playback actions remain under user control.
 - The desktop app must restart to load changes to its main-process/preload search bridge.
+- Fresh desktop startup offers a local music folder, Spotify, or an empty collection to explore. Folder selection is explicit and persisted; files are scanned in place. Spotify connection and output selection use the existing controls and can be skipped.
+- Preview builds use an isolated profile by default. Fresh, copy-existing and continue-preview modes separate the library index, history, tags, preferences and Spotify cache; direct use of normal Music data is an advanced opt-in. Profile changes restart the app, and a process lock prevents concurrent writes to a profile.
+- Portable packages keep profiles under the launcher's adjacent Data folder. Normal preview downloads keep profiles in the OS application-data directory. Spotify credentials and system permissions remain computer-specific.
+- Manual GitHub workflows can publish commit-specific prereleases with regular and portable downloads. Stable version tags publish normal releases. Build and profile metadata are visible in Settings.
 
 ## Product Principles
 
