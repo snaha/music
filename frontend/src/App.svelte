@@ -41,7 +41,7 @@
   <Grid tiles={library.tiles} onpick={pick} activeId={player.song?.albumId} hidden={idle} />
   <div class="hint" class:hidden={!hint}>
     {#each MODES as m, i}<span><b>{i + 1}</b> {m}</span>{/each}
-    <span><b>space</b> play</span><span><b>← →</b> track</span><span><b>?</b> help</span>
+    <span><b>space</b> play</span><span><b>← →</b> track</span><span><b>L</b> now playing</span><span><b>?</b> help</span>
   </div>
   <Bar hidden={idle} />
   {#if player.visOpen}<Visualizer />{/if}

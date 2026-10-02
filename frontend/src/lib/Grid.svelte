@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { Spring } from 'svelte/motion';
   import { library, MODES, setMode, type Tile } from './library.svelte';
   import { player } from './player.svelte';
@@ -77,8 +78,12 @@
   // when the playing album changes (random queue, next track), bring its cover into view
   // that scroll is not the user's: on touch it must not show or hide the top bar, so it is ignored until the next touch
   let scroller: HTMLDivElement, autoScroll = false;
-  $effect(() => {
+  // L, or ctrl/cmd-L as in iTunes, does the same on demand. If the playing album is not in the list (another mode, a search)
+  // it first goes to the albums, and the jump follows once they are in
+  let want = false;
+  function reveal(asked = false) {
     if (!activeId) return;
+    if (asked && !shown.some((t) => t.id === activeId)) { want = true; query = ''; if (library.mode !== 'albums') setMode('albums'); return; }
     autoScroll = true;
     requestAnimationFrame(() => {
       if (!tilt) return scroller?.querySelector('.tile.active')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -91,7 +96,15 @@
       const to = single ? i * pitch : pad + Math.floor(i / cols) * pitch + tile / 2 - viewH / 2;
       scroller.scrollBy({ [flow ? 'left' : 'top']: round(to - offset, looping ? period : 0), behavior: 'smooth' });
     });
-  });
+  }
+  $effect(() => { if (activeId) untrack(reveal); });
+  $effect(() => { if (shown.some((t) => t.id === activeId) && want) { want = false; untrack(reveal); } });
+  function onkeydown(e: KeyboardEvent) {
+    const combo = e.ctrlKey || e.metaKey; // the combination also works from the search field
+    if (e.key.toLowerCase() !== 'l' || e.altKey || player.visOpen || (!combo && (e.target as HTMLElement).tagName === 'INPUT')) return;
+    e.preventDefault();
+    reveal(true);
+  }
   // 3d: a sticky stage holds the plane in view while a spacer gives the page its scroll length, so native scrolling
   // (wheel, touch, scrollbar keys) still drives it; the plane slides along itself by the scroll distance.
   // Only the covers on screen exist, placed one by one: rows up to DEPTH screens up the plane (deeper they are specks
@@ -251,7 +264,7 @@
 </script>
 
 <!-- an image dropped anywhere becomes the custom background -->
-<svelte:window onpointermove={onmove} {ontouchstart} onpointerdowncapture={() => (wasHidden = hidden)}
+<svelte:window {onkeydown} onpointermove={onmove} {ontouchstart} onpointerdowncapture={() => (wasHidden = hidden)}
   ondragover={(e) => e.preventDefault()} ondrop={(e) => { e.preventDefault(); const f = e.dataTransfer?.files[0]; if (f) importBackground(f); }} />
 
 <!-- the visualizer as background sits behind everything; the fullscreen one replaces it while open -->
