@@ -48,6 +48,17 @@
     localStorage.setItem('grid.inf', inf ? '1' : '0');
     localStorage.setItem('set', set);
   });
+  // the covers' paper grain is a bitmap made once. As an svg noise filter it was computed again for every cover drawn:
+  // a quarter of the GPU's drawing time while the 3d grid scrolls
+  let paper = $state('none');
+  {
+    const c = document.createElement('canvas'), g = c.getContext('2d')!;
+    c.width = c.height = 160;
+    const px = g.createImageData(160, 160);
+    for (let i = 0; i < px.data.length; i += 4) { px.data[i] = px.data[i + 1] = px.data[i + 2] = 255; px.data[i + 3] = Math.random() * 13; } // white, up to 5%
+    g.putImageData(px, 0, 0);
+    c.toBlob((b) => { if (b) paper = `url(${URL.createObjectURL(b)})`; });
+  }
   // Navidrome >= 0.64 omits coverArt when no image exists, so an empty cover URL means no art
   // the playing album always shows, even without art, so it can be found and scrolled to
   // search set: filter as you type over title and subtitle (artist name for albums)
@@ -160,9 +171,12 @@
     const to = Math.round(pos() / pitch) * pitch;
     if (Math.abs(to - pos()) > 1) scroller.scrollTo({ left: to, behavior: 'smooth' });
   }
-  // the covers on screen. Keys count whole passes too, so crossing a seam keeps every node
-  let cells = $derived.by(() => {
-    const n = shown.length, out: { key: string; t: Tile; x: number; y: number }[] = [];
+  // the rows on screen with their covers. Keys count whole passes too, so crossing a seam keeps every node.
+  // Each row is a layer of its own, and a far row is drawn small and scaled back up (k): it shows at a fraction of its
+  // size, and at full size the rows together are more than the GPU keeps (240 MB at 2880x1742), so parts go undrawn
+  // ponytail: a row is redrawn when it crosses a step. Add hysteresis if scrolling back and forth over one shows
+  let bands = $derived.by(() => {
+    const n = shown.length, out: { key: number; y: number; k: number; cells: { c: number; t: Tile; x: number }[] }[] = [];
     if (!tilt || single || !n || !(pitch > 0)) return out;
     let r0 = Math.floor((offset + viewH * (1 - DEPTH) - pad) / pitch), r1 = Math.floor((offset + viewH) / pitch); // rows past the bottom edge are off screen, and partly behind the camera,
     // where they break the browser's drawing and hit testing of the whole plane
@@ -170,16 +184,20 @@
     const kr = looping ? Math.floor(scrollTop / period) * rows : 0;
     const xc = planeW / 2; // the plane point at the middle of the screen
     for (let r = r0; r <= r1; r++) {
-      // the view widens with the distance up the plane: perspective is one screen height, the origin mid-screen
+      // size: how large the row shows, 1 at the bottom edge. Perspective is one screen height, the origin mid-screen
       const d = Math.max(0, offset + viewH - (pad + r * pitch + tile / 2));
-      const half = (viewW / 2) * (1 + (d * SIN) / viewH) + pitch;
+      const size = 1 / (1 + (d * SIN) / viewH), k = size > 0.6 ? 1 : size > 0.3 ? 2 : 4, cells = [];
+      // the view widens with the distance up the plane. A row holds the columns in view at the far end of its step, so
+      // they change only when it is redrawn anyway: dropping them one by one as it nears redraws it each time
+      const half = viewW / 2 / (k === 1 ? 0.6 : k === 2 ? 0.3 : 1 / (1 + DEPTH * SIN)) + pitch;
       let c0 = Math.floor((xc - half - pad) / pitch), c1 = Math.floor((xc + half) / pitch);
       if (!wrapping) { c0 = Math.max(0, c0); c1 = Math.min(cols - 1, c1); }
       for (let c = c0; c <= c1; c++) {
         const i = mod(r, rows) * cols + mod(c, cols);
         if (!looping && i >= n) break;
-        out.push({ key: `${r + kr}:${c}`, t: shown[i % n], x: pad + c * pitch, y: pad + r * pitch });
+        cells.push({ c, t: shown[i % n], x: pad + c * pitch });
       }
+      out.push({ key: r + kr, y: pad + r * pitch, k, cells });
     }
     return out;
   });
@@ -242,7 +260,7 @@
 <!-- the material sits on the cards' layer so it scrolls and drifts with them, or on the fixed viewport behind them -->
 <!-- ponytail: a mouse wheel moves cover flow by its raw steps, no easing. Ease it if a notch feels abrupt -->
 <div class="scroll" class:tilt class:flow {onscrollend} onwheel={(e) => { if (flow && !e.deltaX) scroller.scrollLeft += e.deltaY; }} class:fill={!bg.tile} class:m-vinyl={!onCards && bg.material === 'vinyl'} class:m-grille={!onCards && bg.material === 'grille'}
-  class:m-fabric={!onCards && bg.material === 'fabric'} class:m-custom={!onCards && bg.material === 'custom'} style:--custom={bg.custom ? `url("${bg.custom}")` : 'none'} {onscroll} bind:this={scroller} bind:clientHeight={viewH} bind:clientWidth={viewW}>
+  class:m-fabric={!onCards && bg.material === 'fabric'} class:m-custom={!onCards && bg.material === 'custom'} style:--custom={bg.custom ? `url("${bg.custom}")` : 'none'} style:--paper={paper} {onscroll} bind:this={scroller} bind:clientHeight={viewH} bind:clientWidth={viewW}>
   <div class="stage" class:tilt class:flow style:perspective-origin={flow ? `50% ${floorY - tile / 2}px` : null}>
   {#if single}
     <!-- jukebox and cover flow: every cover is its own small layer -->
@@ -265,11 +283,16 @@
     <!-- 3d: the plane, hinged at the bottom edge of the screen -->
     <div class="plane" style:width="{planeW}px" style:left="{(viewW - planeW) / 2}px" style:transform-origin="{planeW / 2}px {viewH}px"
       style:transform="rotateX({TILT}deg) translate3d({shiftX}px, {shiftY}px, 0)">
-      {#each cells as { key, t, x, y } (key)}
-        <button class="tile" class:active={t.id === activeId} style:left="{x}px" style:top="{y}px" style:width="{tile}px" onclick={() => pick(t)} aria-label="{t.title} — {t.sub}">
-          <img src={t.cover} alt={t.title} draggable="false" />
-          <i></i>
-        </button>
+      {#each bands as { key, y, k, cells } (key)}
+        <!-- zoom shrinks the row and all in it, shadows too, so scaled back up it looks the same; its own top is zoomed as well -->
+        <div class="band" style:zoom={1 / k} style:top="{y * k}px" style:transform="scale({k})">
+          {#each cells as { c, t, x } (c)}
+            <button class="tile" class:active={t.id === activeId} style:left="{x}px" style:width="{tile}px" onclick={() => pick(t)} aria-label="{t.title} — {t.sub}">
+              <img src={t.cover} alt={t.title} draggable="false" />
+              <i></i>
+            </button>
+          {/each}
+        </div>
       {/each}
     </div>
   {:else}
@@ -367,7 +390,10 @@
   /* ponytail: a screen-space shade, so it also darkens the background in the top corners the plane leaves bare */
   .stage.tilt:not(.flow)::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(to bottom, #000b 0, #0000 45%); }
   .plane { position: absolute; top: 0; height: 0; will-change: transform; }
-  .plane .tile { position: absolute; }
+  .band { position: absolute; left: 0; transform-origin: 0 0; will-change: transform; }
+  /* the covers move under a resting pointer: an eased hover would redraw their row on every frame of every ease */
+  .plane .tile { position: absolute; top: 0; transition: none; }
+  .plane .tile i { transition: none; }
   /* the scroll sets the transform every frame, so it must not ease */
   .tile.disc.reflect { overflow: visible; }
   .mirror { position: absolute; left: 0; top: calc(100% + 2px); width: 100%; height: 45%; overflow: hidden; pointer-events: none; }
@@ -415,7 +441,7 @@
      measured 26 fps against 53 in cover flow */
   .tile i { position: absolute; inset: 0; border-radius: 1px; pointer-events: none;
     background:
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 160px 160px,
+      var(--paper) 0 0 / 160px 160px,
       linear-gradient(115deg, #fff0 0%, #fff0 18%, rgba(255, 255, 255, 0.11) 30%, rgba(255, 255, 255, 0.04) 42%, #fff0 50%,
         #fff0 62%, rgba(255, 255, 255, 0.06) 70%, #fff0 78%),
       linear-gradient(165deg, rgba(255, 255, 255, 0.10) 0%, #fff0 40%, rgba(0, 0, 0, 0.10) 100%);
