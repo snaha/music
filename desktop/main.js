@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, safeStorage, shell } from 'electron';
+import { MusicDatabase } from './music-database.js';
 import { SpotifyCapture } from './spotify-capture.js';
 import { SpotifyService } from './spotify.js';
 import { spawn } from 'node:child_process';
@@ -75,6 +76,7 @@ let navidrome;
 let spotify;
 let capture;
 let captureOwner;
+let musicDatabase;
 
 app.whenReady().then(async () => {
   // macOS takes Cmd+Q and the Dock/app-switcher quit from the app menu; without one the app can't be quit and a
@@ -102,6 +104,11 @@ app.whenReady().then(async () => {
   serveFrontend(st.webPort);
 
   const page = `http://127.0.0.1:${st.webPort}/`;
+  musicDatabase = new MusicDatabase(path.join(app.getPath('userData'), 'music.sqlite'));
+  for (const method of ['write', 'list', 'clear']) ipcMain.handle(`music-history:${method}`, async (event, args) => {
+    if (event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== page) throw new Error('History is available only in Music.');
+    return musicDatabase.call(method, args);
+  });
   spotify = new SpotifyService({
     directory: path.join(app.getPath('userData'), 'spotify'), secureStorage: safeStorage,
     openExternal: (url) => shell.openExternal(url),
@@ -181,5 +188,14 @@ app.whenReady().then(async () => {
   void spotify.refreshLibrary();
 });
 
-app.on('before-quit', () => { app.isQuitting = true; capture?.stop(); spotify?.cancelLogin?.(); navidrome?.kill(); });
+let databaseClosed = false;
+app.on('before-quit', (event) => {
+  if (musicDatabase && !databaseClosed) {
+    event.preventDefault();
+    databaseClosed = true;
+    void musicDatabase.close().catch(error => console.error('Music database:', error.message)).finally(() => app.quit());
+    return;
+  }
+  app.isQuitting = true; capture?.stop(); spotify?.cancelLogin?.(); navidrome?.kill();
+});
 app.on('window-all-closed', () => app.quit());

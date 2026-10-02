@@ -96,3 +96,44 @@ real hardware; viewport resizing alone does not cover them.
 - Drag each slider and use arrow keys: values must update immediately, without an animation lagging behind the pointer.
 - With macOS Reduce Motion enabled, panels and dropdowns must not travel or scale; slider handles must not expand.
 - Check animation performance on an actual phone separately from browser viewport checks.
+
+## Settings modal — 2026-10-01
+
+Settings now opens a centered native dialog with Appearance, Spotify and Advanced
+tabs. Appearance includes source highlighting. Spotify concentrates account,
+playback output and library controls. Audio capture and playback diagnostics live
+in Advanced. The header and tabs stay fixed while the active panel scrolls.
+
+The synthetic agent-browser regressions passed at 1920×1080, 1440×900, 1024×768
+and 390×844. Added modal centering, category keyboard navigation, focus containment,
+device-menu hit testing, search, keyboard selection, nested Escape and close-button
+focus restoration checks. A separate backdrop-dismissal check passed. Results and
+screenshots are in `.audit-results/2026-10-01T12-41-11-544Z/`; additional theme
+captures and the scoped visual review are in `.audit-results/settings-modal-2026-10-01/`.
+
+The settings screenshots were visually inspected at all four widths and in Studio,
+Classic, Neon and Coss. This is an intentional replacement of the drawer; existing
+approved references were not changed. Other regression screenshots retain their
+pending visual-review status. Frontend checks have zero errors and warnings;
+43 desktop/frontend tests and the desktop frontend build passed.
+
+The repository-local Mac app was inspected but retains its earlier loaded page and
+paused queue. It was not reloaded, so native verification of the new modal remains
+untested. Accounts, permissions, preferences and playback were preserved. Physical
+touch, phone performance, live Spotify playback and audio capture remain untested.
+
+## Settings polish — 2026-10-01
+
+Removed the Advanced section width limit, inset the settings scrollbar with a
+stable gutter, added bottom spacing, and reset scroll when changing categories.
+Spotify shows Disconnect next to the username and a ready indicator only when
+its connection and playback output are ready. An unavailable output retains its
+actionable status. Synthetic disconnect checks retain the saved library.
+
+The agent-browser regression suite passed all four viewport sizes. Expanded
+Advanced panels, all four settings styles and disconnected state screenshots
+were inspected. Results: `.audit-results/2026-10-01T13-02-31-714Z/`; scoped review
+and theme captures: `.audit-results/settings-polish-2026-10-01/`. Frontend checks
+are clean, 43 tests passed, and desktop frontend assets were built. The running
+Mac app was not reloaded or disconnected. Live Spotify, physical touch, phone
+performance and audio capture remain untested.

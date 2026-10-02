@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Combobox } from 'bits-ui';
-  let { value = $bindable(''), options, label, onchange }: {
-    value?: string; options: { value: string; label: string }[]; label: string; onchange?: () => void;
+  let { value = $bindable(''), options, label, onchange, portalTarget }: {
+    value?: string; options: { value: string; label: string }[]; label: string; onchange?: () => void; portalTarget?: Element;
   } = $props();
   let open = $state(false), query = $state('');
   const items = $derived(options.map(item => ({ ...item, value: item.value || '__all__' })));
@@ -12,13 +12,13 @@
   let inputValue = $state('');
   $effect(() => { inputValue = open ? query : selectedLabel; });
 </script>
-<Combobox.Root type="single" value={selected} {items} bind:open {inputValue}
+<Combobox.Root type="single" allowDeselect={false} value={selected} {items} bind:open {inputValue}
   onOpenChange={() => { query = ''; limit = 60; }} onValueChange={(next) => { value = next === '__all__' ? '' : next; onchange?.(); }}>
   <div class="library-select-field">
     <Combobox.Input aria-label={label} placeholder={selectedLabel} oninput={(event) => { const text = event.currentTarget.value; open = true; query = text; limit = 60; }} />
     <Combobox.Trigger aria-label="Open {label}">⌄</Combobox.Trigger>
   </div>
-  <Combobox.Portal>
+  <Combobox.Portal to={portalTarget}>
     <Combobox.Content class="library-select-menu" sideOffset={6} align="start">
       <Combobox.Viewport>
         {#each matches.slice(0, limit) as item (item.value)}

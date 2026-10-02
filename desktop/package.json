@@ -10,7 +10,7 @@
     "navidrome": "node scripts/fetch-navidrome.mjs",
     "build:frontend": "cd ../frontend && pnpm build --outDir ../desktop/dist --emptyOutDir",
     "build:preload": "node scripts/build-preload.mjs",
-    "test": "node --test spotify.test.js spotify-library.test.js spotify-capture.test.js player.test.js && node --experimental-strip-types --test ../frontend/tests/*.test.ts",
+    "test": "node --test spotify.test.js spotify-library.test.js spotify-capture.test.js music-store.test.js history.test.js player.test.js && node --experimental-strip-types --test ../frontend/tests/*.test.ts",
     "dev": "pnpm build:preload && pnpm build:frontend && electron .",
     "dist": "pnpm navidrome && pnpm build:preload && pnpm build:frontend && electron-builder --linux --publish never",
     "dist:mac": "pnpm build:native && pnpm navidrome && pnpm build:preload && pnpm build:frontend && electron-builder --mac --arm64 --publish never",
@@ -29,6 +29,9 @@
     "asar": false,
     "files": [
       "main.js",
+      "music-database.js",
+      "music-store-worker.js",
+      "music-store.js",
       "spotify.js",
       "spotify-model.js",
       "preload.bundle.cjs",

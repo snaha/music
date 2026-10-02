@@ -2,21 +2,42 @@
   import LibrarySelect from './ui/library-select.svelte';
   import Button from './ui/button.svelte';
   import { connectSpotify, disconnectSpotify, refreshDevices, refreshSpotify, selectSpotifyDevice, spotify, removeSpotifyLibrary, spotifyMessage, checkSpotify } from './spotify.svelte';
-  import { capture, enableCapture } from './spotify-visualizer.svelte';
+  let { portalTarget }: { portalTarget?: Element } = $props();
   const albums = $derived(spotify.albums.length);
   const playlists = $derived(spotify.collections.filter((t) => t.kind === 'playlist' && t.id !== 'spotify:liked').length);
   const hasLiked = $derived(spotify.collections.some((t) => t.id === 'spotify:liked'));
   let clientId = $state('');
   let deviceId = $state('');
   let sameMac = $state(false);
+  let disconnecting = $state(false);
+  const ready = $derived(spotify.connected && spotify.availability === 'ready');
   $effect(() => { if (!clientId) clientId = spotify.clientId; });
   $effect(() => { deviceId = spotify.deviceId; sameMac = spotify.sameMac; });
+  async function disconnect() {
+    disconnecting = true;
+    try { await disconnectSpotify(); }
+    finally { disconnecting = false; }
+  }
 </script>
 
 {#if window.spotify}
   <section class="spotify-settings">
-    <h2>Spotify</h2>
-    <p role="status">{spotifyMessage()}</p>
+    <div class="connection">
+      <div class="connection-info">
+        <h2>Spotify</h2>
+        <p class="connection-status" class:ready role="status">
+          {#if ready}<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" /><path d="m4.8 8 2.1 2.1 4.3-4.3" /></svg>{/if}
+          {spotify.connected ? ready ? 'Connected · Playback ready' : 'Connected' : 'Not connected'}
+        </p>
+      </div>
+      {#if spotify.connected}
+        <div class="account">
+          <span class="account-name">{spotify.account}</span>
+          <Button variant="outline" size="sm" disabled={disconnecting} aria-busy={disconnecting} onclick={disconnect}>{disconnecting ? 'Disconnecting…' : 'Disconnect'}</Button>
+        </div>
+      {/if}
+    </div>
+    {#if !ready}<p role="status">{spotifyMessage()}</p>{/if}
     {#if !spotify.connected || spotify.availability === 'reconnect'}
       <p>Your albums, likes and playlists, played through Spotify Desktop.</p>
       <label>Client ID <input type="text" bind:value={clientId} placeholder="Spotify developer app client ID" autocomplete="off" spellcheck="false" /></label>
@@ -26,17 +47,16 @@
         {#if spotify.connecting}<Button variant="outline" onclick={() => window.spotify!.cancel()}>Cancel</Button>{/if}
       </div>
     {:else}
-      <p>Connected · {spotify.account}</p>
-      <details open={!spotify.deviceId || spotify.availability === 'device-unavailable'}>
+      <details open>
         <summary><span>Playback output</span><span class="device">{spotify.deviceName}</span></summary>
         <div class="detail-body">
           <p>Open Spotify Desktop on this Mac, then select it below. Both players must use the same audio output.</p>
           <div class="actions">
-            <LibrarySelect label="Spotify playback device" bind:value={deviceId} options={[{ value: '', label: 'Select a device' }, ...(spotify.deviceId && !spotify.devices.some(device => device.id === spotify.deviceId) ? [{ value: spotify.deviceId, label: spotify.deviceName }] : []), ...spotify.devices.filter(device => !device.is_restricted).map(device => ({ value: device.id, label: `${device.name} · ${device.type}` }))]} />
+            <LibrarySelect {portalTarget} label="Spotify playback device" bind:value={deviceId} options={[{ value: '', label: 'Select a device' }, ...(spotify.deviceId && !spotify.devices.some(device => device.id === spotify.deviceId) ? [{ value: spotify.deviceId, label: spotify.deviceName }] : []), ...spotify.devices.filter(device => !device.is_restricted).map(device => ({ value: device.id, label: `${device.name} · ${device.type}` }))]} />
             <Button variant="outline" onclick={refreshDevices}>Find devices</Button>
           </div>
           <label><input type="checkbox" bind:checked={sameMac} /><span>This is Spotify Desktop on this Mac</span></label>
-          <Button variant="outline" disabled={!deviceId} onclick={() => selectSpotifyDevice(deviceId, sameMac)}>Use this output</Button>
+          <Button disabled={!deviceId} onclick={() => selectSpotifyDevice(deviceId, sameMac)}>Use this output</Button>
           <small>For managed queues, turn Autoplay off in Spotify. Music controls shuffle and repeat while its queue is playing. Remote speakers support Spotify-only queues.</small>
         </div>
       </details>
@@ -46,20 +66,12 @@
           <Button variant="outline" onclick={() => checkSpotify(true)}>Check connection and output</Button>
           <div class="actions">
             <Button variant="outline" disabled={spotify.syncing || spotify.indexing} onclick={refreshSpotify}>{spotify.syncing || spotify.indexing ? 'Refreshing…' : 'Refresh library'}</Button>
-            <Button variant="outline" onclick={disconnectSpotify}>Disconnect</Button>
           </div>
           <p>{albums} library albums · {spotify.indexedTracks} indexed tracks · {playlists} playlists{#if hasLiked}, and Liked Songs{/if}{#if spotify.updatedAt} · Updated {new Date(spotify.updatedAt).toLocaleString()}{/if}</p>
-          <p>{spotify.inaccessiblePlaylists} playlists have inaccessible contents and cannot contribute album tracks.</p>
+          <p>{spotify.inaccessiblePlaylists} playlists can be opened in Spotify, but their song lists are restricted here. To use those songs in Music, save them to Liked Songs or a playlist you own, then refresh the library.</p>
           {#if spotify.collections.length || spotify.albums.length}
             <Button variant="outline" onclick={removeSpotifyLibrary}>Remove saved Spotify library</Button>
           {/if}
-        </div>
-      </details>
-      <details>
-        <summary>Visualization · experimental</summary>
-        <div class="detail-body">
-          <label><input type="checkbox" checked={capture.enabled} onchange={event => enableCapture(event.currentTarget.checked)} /><span>Enable Spotify audio capture for visualizations</span></label>
-          <small>macOS 14.2+. Captures only Spotify on this Mac while a visualizer is open, including the background. Audio is never replayed, recorded or uploaded.</small>
         </div>
       </details>
     {/if}
@@ -73,13 +85,19 @@
     {/if}
     {#if spotify.progress}<p role="status">{spotify.progress}</p>{/if}
     {#if spotify.indexError}<p class="error" role="status">Album discovery paused: {spotify.indexError}</p>{/if}
-    {#if capture.message}<p role="status">{capture.message}</p>{/if}
     {#if spotify.error}<p class="error" role="alert">{spotify.error}</p>{/if}
   </section>
 {/if}
 
 <style>
-  section { display: flex; flex-direction: column; gap: 12px; letter-spacing: 0; text-transform: none; max-width: 700px; border-top: 1px solid var(--ui-border); padding-top: 20px; }
+  section { display: flex; flex-direction: column; gap: 12px; letter-spacing: 0; text-transform: none; }
+  .connection { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px 24px; padding-bottom: 4px; }
+  .connection-info { display: flex; flex-direction: column; gap: 6px; }
+  .connection-status { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  .connection-status.ready { color: var(--ui-text); }
+  .connection-status svg { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: var(--ui-accent); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .account { display: flex; align-items: center; gap: 12px; min-width: 0; max-width: 100%; }
+  .account-name { min-width: 0; font-size: 14px; color: var(--ui-text); overflow-wrap: anywhere; }
   h2 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.015em; }
   p { margin: 0; line-height: 1.5; color: var(--ui-text-muted); }
   small { line-height: 1.6; font-size: 13px; color: var(--ui-text-muted); }
@@ -95,7 +113,7 @@
   .spotify-settings :global([data-slot=button]) { align-self: flex-start; }
   input:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
   details { border-top: 1px solid var(--ui-border); }
-  summary { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 550; color: var(--ui-text-muted); cursor: pointer; list-style: none; }
+  summary { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 550; color: var(--ui-text-muted); cursor: pointer; list-style: none; }
   summary::-webkit-details-marker { display: none; }
   summary::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); transition: transform 180ms ease-out; margin-right: 4px; }
   details[open] > summary::after { transform: rotate(225deg); }

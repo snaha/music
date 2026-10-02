@@ -1,7 +1,8 @@
 export type Source = 'local' | 'spotify';
 export type Track = {
   id: string; rawId: string; source: Source; title: string; artist?: string; album?: string;
-  albumId?: string; cover: string; duration?: number; track?: number; disc?: number; uri?: string;
+  albumId?: string; coverId?: string; cover: string; duration?: number; track?: number; disc?: number; uri?: string;
+  playbackOrigin?: Pick<Collection, 'id' | 'rawId' | 'source' | 'kind' | 'title' | 'cover'>;
   albumInfo?: Collection; origins?: { id: string; title: string; kind: string }[];
   externalUrl?: string; available: boolean;
 };

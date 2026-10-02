@@ -13,7 +13,8 @@ pnpm --dir frontend audit:serve
 
 Opens a loopback server at http://127.0.0.1:4178 after building the frontend.
 Contains 240 synthetic albums, a playlist, long titles and multiple discs. Local
-API and Spotify playback are mocked. No real library, tokens or audio are used.
+API and Spotify playback are mocked. Listening history uses an isolated temporary
+SQLite database, deleted when the fixture server stops. No real library, tokens or audio are used.
 Reload resets the fixture's browser preferences. Keep the fixture separate from
 the actual app, whose settings and playback are real.
 
@@ -33,7 +34,8 @@ Set `MUSIC_AGENT_BROWSER` to use another CLI executable location.
 
 Runs at 1920×1080, 1440×900, 1024×768 and 390×844. Checks hover/focus and overlay
 hit testing, cover play, dropdown opening/no-match/Escape/selection/reset,
-Settings state and width, click-only menus and keyboard dismissal, track-detail
+Settings modal centering, focus containment, category keys, device-picker search,
+keyboard selection and nested Escape, click-only menus and keyboard dismissal, track-detail
 overflow, and scroll/tile-order preservation during background updates.
 
 Writes timestamped screenshots, results.json, and failure screenshots/snapshots

@@ -28,3 +28,9 @@ contextBridge.exposeInMainWorld('spotifyCapture', {
   onSamples: (callback) => { const listener = (_event, data) => { try { callback(data); } finally { ipcRenderer.send('capture:ack', data.sequence); } }; ipcRenderer.on('capture:samples', listener); return () => ipcRenderer.removeListener('capture:samples', listener); },
   onState: (callback) => { const listener = (_event, data) => callback(data); ipcRenderer.on('capture:state', listener); return () => ipcRenderer.removeListener('capture:state', listener); },
 });
+
+contextBridge.exposeInMainWorld('musicHistory', {
+  write: (batch) => ipcRenderer.invoke('music-history:write', batch),
+  list: (query) => ipcRenderer.invoke('music-history:list', query),
+  clear: (scope) => ipcRenderer.invoke('music-history:clear', { scope }),
+});

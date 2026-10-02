@@ -24,3 +24,15 @@ export async function confirmSpotify(predicate: (state: SpotifyPlayback | null) 
   }
   throw new Error('Spotify did not confirm playback. The queue is preserved; check Spotify Desktop and retry.');
 }
+
+// Spotify may briefly return an older snapshot even after confirming a handoff.
+// Recheck same-device track/mode mismatches only near our own successful start.
+// A changed device or media type still yields control immediately.
+export async function settleRemoteObservation(state: SpotifyPlayback | null, expected: Track, deviceId: string, previous: RemoteObservation | undefined, recentHandoff: boolean,
+  read: () => Promise<SpotifyPlayback | null> = () => window.spotify!.playback(),
+  wait: () => Promise<void> = () => new Promise(resolve => setTimeout(resolve, 350))) {
+  for (let i = 0; recentHandoff && i < 2 && state?.deviceId === deviceId && state.type === 'track' && interpretRemote(state, expected, deviceId, previous) === 'external'; i++) {
+    await wait(); state = await read();
+  }
+  return state;
+}

@@ -5,14 +5,24 @@ export const bootstrap = () => {
     localStorage.setItem('motion', '0');
     const cover = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="#27465b"/><circle cx="200" cy="200" r="120" fill="#d4a35b"/><circle cx="200" cy="200" r="45" fill="#27465b"/></svg>')}`;
     const albums = Array.from({ length: 240 }, (_, i) => ({ id: `spotify:album:${i}`, rawId: `${i}`, source: 'spotify', kind: 'album', title: i === 0 ? 'A very long album title with multiple editions and a complete collection of recordings' : `Album ${String(i).padStart(3, '0')}`, sub: i % 2 ? 'David Bowie' : 'Various Artists', cover, count: 2, available: true, externalUrl: 'https://open.spotify.com/album/audit' }));
+    albums[3] = { ...albums[3], available: false, count: 0, incomplete: true };
     const tracks = [1, 2].map(i => ({ id: `spotify:track:${i}`, rawId: `${i}`, source: 'spotify', title: `Included song ${i} with a longer title`, artist: 'Various Artists', album: albums[0].title, cover, duration: 180, disc: i, track: 1, uri: `spotify:track:audit${i}`, available: true, origins: [{ id: 'liked', title: 'Liked Songs', kind: 'playlist' }] }));
-    const collections = [{ ...albums[0], id: 'spotify:liked', kind: 'playlist', title: 'Liked Songs', count: 2 }];
+    const collections = [{ ...albums[0], id: 'spotify:liked', kind: 'playlist', title: 'Liked Songs', count: 2 }, { ...albums[1], id: 'spotify:playlist:restricted', rawId: 'restricted', kind: 'playlist', title: 'Spotify-made mix', sub: 'Spotify playlist', count: 25, available: false, externalUrl: 'https://open.spotify.com/playlist/audit' }];
     const status = { availability: 'ready', connected: true, account: 'Test account', clientId: '', collections, albums, indexedTracks: 480, indexing: false, indexError: '', inaccessiblePlaylists: 1, updatedAt: 0, syncing: false, progress: '', error: '', retryAt: 0, quotaBlocked: false, deviceId: 'audit', deviceName: 'Spotify Desktop', sameMac: true };
     let callback;
     let playback = null;
     w.desktop = { url: location.origin, username: 'audit', password: 'test-only', frame: true };
+    const historyScope = crypto.randomUUID();
+    const historyCall = async (method, args) => {
+        const response = await fetch(`/audit-history/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...args, scope: `${args.scope}:${historyScope}` }) });
+        const reply = await response.json();
+        if (!response.ok) throw new Error(reply.error);
+        return reply.value;
+    };
+    w.musicHistory = { write: args => historyCall('write', args), list: args => historyCall('list', args), clear: scope => historyCall('clear', { scope }) };
     w.__auditCommands = [];
     w.__auditRefresh = () => callback?.({ ...status, albums: albums.map(a => ({ ...a, count: 3 })) });
+    w.__auditSpotifyStatus = (changes) => { Object.assign(status, changes); callback?.({ ...status }); };
     w.spotify = {
         status: async () => status, checkAvailability: async () => status, onChange: (fn) => { callback = fn; return () => { callback = undefined; }; },
         playback: async () => playback, transition: async () => { },
@@ -26,6 +36,7 @@ export const bootstrap = () => {
         },
         devices: async () => [{ id: 'audit', name: 'Spotify Desktop', type: 'Computer', is_restricted: false, is_active: true }],
         selectDevice: async () => status, refresh: async () => status,
-        albumTracks: async () => ({ tracks, next: null }), tracks: async () => ({ tracks, next: null }), external: async () => { },
+        disconnect: async () => { w.__auditCommands.push(['disconnect']); w.__auditSpotifyStatus({ connected: false, availability: 'disconnected' }); return { ...status }; },
+        albumTracks: async () => ({ tracks, next: null }), tracks: async () => ({ tracks, next: null }), external: async url => { w.__auditExternal = url; },
     };
 };

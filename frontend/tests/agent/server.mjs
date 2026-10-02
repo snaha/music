@@ -1,6 +1,10 @@
 import http from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
+import { MusicDatabase } from '../../../desktop/music-database.js';
+const historyDirectory = await mkdtemp(path.join(os.tmpdir(), 'music-audit-'));
+const history = new MusicDatabase(path.join(historyDirectory, 'music.sqlite'));
 import { bootstrap } from './fixture.mjs';
 
 const root = path.resolve(import.meta.dirname, '../../dist');
@@ -13,6 +17,17 @@ const bodies = {
 const injection = `<script>(${bootstrap.toString()})();</script>`;
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
+  if (url.pathname.startsWith('/audit-history/') && req.method === 'POST') {
+    const method = url.pathname.split('/').pop();
+    res.setHeader('Content-Type', 'application/json');
+    try {
+      if (!['write', 'list', 'clear'].includes(method)) throw new Error('Unknown history operation');
+      const chunks = []; for await (const chunk of req) chunks.push(chunk);
+      const value = await history.call(method, JSON.parse(Buffer.concat(chunks).toString()));
+      res.end(JSON.stringify({ value }));
+    } catch (error) { res.writeHead(400); res.end(JSON.stringify({ error: error.message })); }
+    return;
+  }
   if (url.pathname.startsWith('/rest/')) {
     const method = url.pathname.split('/').pop().replace('.view', '');
     res.setHeader('Content-Type', 'application/json');
@@ -29,5 +44,6 @@ const server = http.createServer(async (req, res) => {
   } catch { res.writeHead(404).end('Not found; build the frontend first.'); }
 });
 server.listen(port, '127.0.0.1', () => console.log(`Music regression fixture: http://127.0.0.1:${port} (synthetic library, mocked playback)`));
-process.on('SIGINT', () => server.close());
-process.on('SIGTERM', () => server.close());
+const stop = () => server.close(async () => { await history.close(); await rm(historyDirectory, { recursive: true, force: true }); });
+process.on('SIGINT', stop);
+process.on('SIGTERM', stop);

@@ -1,15 +1,17 @@
+import { logPlayback } from './playback-log';
 import { session, streamUrl } from './api.svelte';
 import { spotify, spotifyPlayable, spotifyMessage } from './spotify.svelte';
 import { PlaybackController, type PlaybackAdapter } from './playback-controller';
-import { confirmSpotify, interpretRemote, type RemoteObservation } from './spotify-playback';
+import { confirmSpotify, interpretRemote, settleRemoteObservation, type RemoteObservation } from './spotify-playback';
 import { shuffle } from './shuffle';
 import type { Track } from './music';
+import { recordHistory, saveHistory, historyTrack, type ListeningContext, type HistoryEntry } from './listening-history.svelte';
 
 export type Order = 'normal' | 'shuffle' | 'random';
 export type Grid = { count: number; key: string; find(albumId: string): number; song(n: number): Promise<Track | undefined> };
 export const player = $state({
   queue: [] as Track[], index: -1, blockedIndex: -1, playing: false, pending: false, requesting: false, requestRevision: 0, suspended: false, error: '',
-  time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, shortcutsOpen: false, topHidden: false, visOpen: false,
+  time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, queueTab: 'queue' as 'queue' | 'history', shortcutsOpen: false, topHidden: false, visOpen: false,
   view: '' as '' | 'share' | 'settings', viewFrom: 'bottom' as 'bottom' | 'right',
   get song() { return this.queue[this.index] as Track | undefined; },
 });
@@ -24,6 +26,16 @@ let lastRemote: RemoteObservation | undefined;
 let remoteSampleAt = 0, remoteProgress = 0;
 let pollTimer: ReturnType<typeof setTimeout> | undefined, polling = false;
 let queueVersion = 0;
+let handoffAt = 0;
+let historyContext: ListeningContext | undefined;
+function freshHistoryContext() { historyContext = undefined; }
+function remember(index: number) {
+  if (!historyContext) {
+    const context = $state<ListeningContext>({ id: crypto.randomUUID(), queue: player.queue.map(t => ({ ...t })), origin: player.queue[index]?.playbackOrigin, order: player.order, permutation: [...perm] });
+    historyContext = context;
+  }
+  recordHistory(historyContext, index, cursor);
+}
 
 function clearWarm() { warmAudio.removeAttribute('src'); warmAudio.load(); }
 function requireMixedOutput() {
@@ -48,7 +60,7 @@ const remoteAdapter: PlaybackAdapter = {
   async prepare() { await graph?.ctx.resume(); },
   async start(track) {
     await window.spotify!.command('play', track.uri);
-    const state = await confirmSpotify((s) => !!s && s.deviceId === spotify.deviceId && s.track?.id === track.id && s.playing);
+    const state = await confirmSpotify((s) => !!s && s.deviceId === spotify.deviceId && s.track?.id === track.id && s.playing && !s.shuffle && s.repeat === 'off');
     if (state) rememberRemote(track, state.progress, true);
   },
   async pause() {
@@ -102,16 +114,19 @@ async function start(index: number) {
   catch (error) { player.error = (error as Error).message; player.view = 'settings'; return; }
   player.blockedIndex = -1;
   const mine = ++intent;
+  logPlayback('start-request', { source: track.source, trackId: track.id, queueLength: player.queue.length, index });
   player.index = index; player.pending = true; player.suspended = false; player.error = '';
   player.time = 0; player.duration = track.duration ?? 0; playing(false); lastRemote = undefined;
   const startedAt = performance.now();
   void window.spotify?.transition?.(true).catch(() => {});
   try {
     await controller.play(track);
-    if (mine !== intent) return;
-    player.pending = false; playing(true); metadata(track); prepareNext(); schedulePoll(1000);
+    if (mine !== intent) { logPlayback('start-superseded', { intent: mine }); return; }
+    handoffAt = Date.now();
+    logPlayback('start-confirmed', { source: track.source, trackId: track.id, intent: mine });
+    player.pending = false; playing(true); remember(player.index); metadata(track); prepareNext(); schedulePoll(1000);
     performance.measure('music-playback-handoff', { start: startedAt, end: performance.now(), detail: { source: track.source } });
-  } catch (error) { if (mine === intent) fail(error); }
+  } catch (error) { if (mine === intent) { logPlayback('start-failed', { source: track.source, trackId: track.id, availability: spotify.availability, quotaBlocked: spotify.quotaBlocked, retryAt: spotify.retryAt, confirmationTimeout: error instanceof Error && error.message.includes('did not confirm') }); fail(error); } }
   finally { if (mine === intent) void window.spotify?.transition?.(false).catch(() => {}); }
 }
 
@@ -122,7 +137,7 @@ export function play(queue: Track[], index = 0) {
   if (blocked(queue[Math.max(0, index)])) return -1;
   if (queue.some(t => t.source === 'spotify') && queue.some(t => t.source === 'local') && !spotify.sameMac) { player.error = 'Mixed queues need Spotify Desktop on this Mac. Choose and confirm it in Settings.'; player.view = 'settings'; return -1; }
   player.requestRevision++;
-  queueVersion++;
+  queueVersion++; freshHistoryContext();
   randomDraw++; randomGrid = undefined;
   player.queue = queue.map((t) => ({ ...t })); player.index = Math.max(0, index);
   if (player.order === 'random') player.order = 'normal';
@@ -134,7 +149,9 @@ export function appendToSession(tracks: Track[], version: number) {
   if (version !== queueVersion) return false;
   const offset = player.queue.length;
   player.queue.push(...tracks.map((t) => ({ ...t })));
+  if (historyContext) historyContext.queue.push(...tracks.map(t => ({ ...t })));
   if (player.order === 'shuffle') perm = Uint32Array.from([...perm, ...Array.from(shuffle(tracks.length), (i) => i + offset)]);
+  if (historyContext) { historyContext.permutation = [...perm]; saveHistory(historyContext); }
   prepareNext(); return true;
 }
 export function enqueue(tracks: Track[]) {
@@ -144,6 +161,7 @@ export function enqueue(tracks: Track[]) {
 }
 export function moveQueue(from: number, to: number) {
   if (from < 0 || to < 0 || from >= player.queue.length || to >= player.queue.length) return;
+  freshHistoryContext();
   const current = player.song;
   player.blockedIndex = -1;
   const [entry] = player.queue.splice(from, 1); player.queue.splice(to, 0, entry);
@@ -152,6 +170,7 @@ export function moveQueue(from: number, to: number) {
 }
 export function removeQueue(index: number) {
   if (index < 0 || index >= player.queue.length) return;
+  freshHistoryContext();
   const current = player.song;
   const removingCurrent = index === player.index;
   player.queue.splice(index, 1);
@@ -164,11 +183,13 @@ export function removeQueue(index: number) {
 
 export function setOrder(order: Order, source: () => Grid) {
   if (order === player.order) return;
+  freshHistoryContext();
   player.order = order; randomDraw++;
   if (order === 'random') {
     randomGrid = source(); // freeze the source selection for this listening session
     perm = shuffle(randomGrid.count); cursor = -1;
-    const current = player.song;
+    freshHistoryContext();
+  const current = player.song;
     player.queue = current ? [current] : []; player.index = current ? 0 : -1;
     if (!current) void nextRandom();
   } else { randomGrid = undefined; rebuildShuffle(); }
@@ -183,6 +204,7 @@ async function nextRandom() {
     if (mine !== randomDraw) return;
     if (!track) throw new Error('This collection has no playable music tracks. Skip to continue.');
     if (blocked(track)) { cursor--; return; }
+    freshHistoryContext();
     player.queue.push({ ...track }); void start(player.queue.length - 1);
   } catch (error) { if (mine === randomDraw) fail(error); }
   finally { if (mine === randomDraw) player.requesting = false; }
@@ -192,11 +214,28 @@ export function jumpRandom(source: () => Grid) {
   if (player.order !== 'random') { setOrder('random', source); if (hadSong) void nextRandom(); }
   else void nextRandom();
 }
+export function replayHistory(entry: HistoryEntry) {
+  const context = entry.context;
+  logPlayback('history-selected', { entryId: entry.id, contextId: context.id, index: entry.index });
+  const queue = context.queue.map(historyTrack);
+  if (blocked(queue[entry.index])) return;
+  // Start the chosen occurrence, then restore the exact shuffle permutation.
+  const previousOrder = player.order;
+  player.order = 'normal';
+  if (play(queue, entry.index) < 0) { player.order = previousOrder; return; }
+  player.order = context.order === 'random' ? 'normal' : context.order;
+  if (player.order === 'shuffle') {
+    const valid = context.permutation.length === queue.length && new Set(context.permutation).size === queue.length && context.permutation.every(i => Number.isInteger(i) && i >= 0 && i < queue.length);
+    perm = valid ? Uint32Array.from(context.permutation) : shuffle(queue.length, entry.index);
+    cursor = [...perm].indexOf(entry.index);
+  }
+  player.queueTab = 'queue';
+}
 export function jump(index: number) {
   player.requestRevision++;
   randomDraw++;
   if (blocked(player.queue[index])) return;
-  if (player.order === 'shuffle') { player.index = index; rebuildShuffle(); }
+  if (player.order === 'shuffle') { freshHistoryContext(); player.index = index; rebuildShuffle(); }
   void start(index);
 }
 export function next() {
@@ -255,16 +294,25 @@ async function pollRemote() {
   if (polling || controller.active !== 'spotify' || player.pending || player.suspended || !player.song) { schedulePoll(2000); return; }
   polling = true; const track = player.song, mine = intent;
   try {
-    const state = await window.spotify!.playback();
+    const initial = await window.spotify!.playback();
+    if (mine !== intent || player.song !== track) return;
+    const firstResult = interpretRemote(initial, track, spotify.deviceId, lastRemote);
+    if (firstResult === 'external') logPlayback('spotify-mismatch', { expectedTrackId: track.id, observedTrackId: initial?.track?.id ?? null, sameDevice: initial?.deviceId === spotify.deviceId, type: initial?.type ?? 'none', shuffle: initial?.shuffle ?? false, repeat: initial?.repeat ?? 'unknown', sinceHandoffMs: Date.now() - handoffAt });
+    const state = await settleRemoteObservation(initial, track, spotify.deviceId, lastRemote, Date.now() - handoffAt < 5000, async () => {
+      if (mine !== intent) return null;
+      return window.spotify!.playback();
+    });
     if (mine !== intent || player.song !== track) return;
     const result = interpretRemote(state, track, spotify.deviceId, lastRemote);
+    if (firstResult === 'external' && result !== 'external') logPlayback('spotify-mismatch-recovered', { trackId: track.id });
     if (result === 'external') {
+      logPlayback('spotify-ownership-released', { expectedTrackId: track.id, observedTrackId: state?.track?.id ?? null });
       controller.suspend(); fail(new Error('Playback changed in Spotify. Your queue is paused here; press Play to take control again.')); return;
     }
     if (result === 'unavailable') { fail(new Error('Spotify Desktop is unavailable. Open it, play and pause a track there, then press Play here.')); return; }
     if (result === 'ended') { lastRemote = undefined; playing(false); next(); return; }
     rememberRemote(track, state!.progress, state!.playing); player.time = state!.progress; playing(state!.playing);
-  } catch (error) { if (mine === intent) fail(error); }
+  } catch (error) { if (mine === intent) { logPlayback('spotify-poll-failed', { trackId: track.id, availability: spotify.availability, quotaBlocked: spotify.quotaBlocked, retryAt: spotify.retryAt }); fail(error); } }
   finally {
     polling = false;
     const remaining = player.duration - player.time;

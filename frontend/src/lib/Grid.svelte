@@ -12,6 +12,7 @@
   import { addCollection, library, MODES, setMode, type Mode, type Tile } from './library.svelte';
   import { spotify, spotifyPlayable, spotifyDimmed, spotifyMessage, spotifyRecoveryLabel, checkSpotify } from './spotify.svelte';
   import { player } from './player.svelte';
+  import { spotifyCollectionState } from './spotify-collection-state';
   import CollectionDetails from './CollectionDetails.svelte';
   import Settings from './Settings.svelte';
   import Visualizer from './Visualizer.svelte';
@@ -46,6 +47,7 @@
   let sort = $state('library');
   let favoritesOnly = $state(false);
   let details = $state<Tile | null>(null);
+  const currentDetails = $derived.by(() => { const selected = details; return selected ? library.tiles.find(tile => tile.id === selected.id) || selected : null; });
   const filtersOpen = $derived(toolbar.mode === 'filters');
   let discoveryId = $state('');
   const activeFilters = $derived(Number(library.source !== 'all') + Number(!!artistFilter) + Number(sort !== 'library') + Number(favoritesOnly));
@@ -233,7 +235,6 @@
         {/each}
         <button class="opt" onclick={randomBackground} title="one of the bundled sample backgrounds">Random</button>
       </span>
-      <label><input type="checkbox" bind:checked={library.highlight} /> Highlight sources</label>
     {/if}
   </div>
   {/if}
@@ -269,20 +270,21 @@
     style:padding-top="{pixelGap + firstRow * rowStep}px" style:padding-bottom="{140 + (totalRows - lastRow) * rowStep}px"
     style:transform="translate3d({drift.current.x * -8}px, {drift.current.y * -6}px, 0)">
     {#each visibleTiles as t (t.id)}
+      {@const access = spotifyCollectionState(t, spotify.indexing)}
       <div class="tile-wrap" class:source-highlight={library.highlight} class:spotify-tile={t.source === 'spotify'} class:discovered={t.id === discoveryId}>
-        <button class="tile" class:unavailable-art={t.source === 'spotify' && (spotifyDimmed() || !t.available)} class:active={t.id === activeId} onclick={() => { if (t.source === 'spotify' && (!spotifyPlayable() || !t.available)) details = t; else pick(t); }} aria-label="{t.source === 'spotify' && (!spotifyPlayable() || !t.available) ? 'Show saved tracks' : 'Play'} {t.title} — {t.sub} — {t.source}">
+        <button class="tile" class:unavailable-art={t.source === 'spotify' && (spotifyDimmed() || !t.available)} class:active={t.id === activeId} onclick={() => { if (t.source === 'spotify' && (!spotifyPlayable() || !t.available)) details = t; else pick(t); }} aria-label="{t.source === 'spotify' && (!spotifyPlayable() || !t.available) ? 'Show availability and tracks' : 'Play'} {t.title} — {t.sub} — {t.source}">
           {#if t.cover}<img src={t.cover} alt={t.title} loading="lazy" draggable="false" />{:else}<span class="fallback">{t.title}</span>{/if}
           {#if t.source === 'local'}<i></i>{/if}
         </button>
-        {#if t.source === 'spotify' && (!spotifyPlayable() || !t.available)}<span class="availability-badge" title={!t.available ? 'Spotify tracks are not accessible in Music' : spotifyMessage()}>{!t.available ? 'Tracks unavailable' : ''}{#if t.available}{spotify.availability === 'device-unavailable' ? 'Choose output' : spotify.availability === 'checking' ? 'Checking' : spotify.availability === 'restricted' ? 'Access restricted' : spotify.availability === 'offline' ? 'Offline' : spotify.availability === 'reconnect' ? 'Reconnect' : 'Disconnected'}{/if}</span>{/if}
+        {#if t.source === 'spotify' && (!spotifyPlayable() || !t.available)}<span class="availability-badge" title={access?.detail || spotifyMessage()}>{access?.label || ''}{#if t.available}{spotify.availability === 'device-unavailable' ? 'Choose output' : spotify.availability === 'checking' ? 'Checking' : spotify.availability === 'restricted' ? 'Access restricted' : spotify.availability === 'offline' ? 'Offline' : spotify.availability === 'reconnect' ? 'Reconnect' : 'Disconnected'}{/if}</span>{/if}
         <div class="tile-info">
-          <span class="tile-title">{t.title}<small>{t.sub}</small><small>{t.indexing ? 'Indexing…' : `${t.count} included track${t.count === 1 ? '' : 's'}`}</small></span>
+          <span class="tile-title">{t.title}<small>{t.sub}</small><small>{access ? access.label : `${t.count} included track${t.count === 1 ? '' : 's'}`}</small></span>
           <span class="tile-actions">
             {#if t.source === 'spotify' && t.externalUrl}
               <button class="source-link" onclick={() => window.spotify!.external(t.externalUrl!).catch((e) => (player.error = e.message))} aria-label="Open {t.title} in Spotify">Spotify ↗</button>
             {:else if library.highlight}<span class="source-link">Local</span>{/if}
-            <button class="details" onclick={() => { details = t; player.queueOpen = false; player.view = ''; }} aria-label="Show tracks in {t.title}" title="Included tracks">☷</button>
-            <button class="add" onclick={() => addCollection(t)} disabled={!t.available} aria-label="Add {t.title} to queue{t.source === 'spotify' && !spotifyPlayable() ? ' · Spotify required' : ''}" title={t.indexing ? 'Album discovery in progress' : t.available ? (t.source === 'spotify' && !spotifyPlayable() ? 'Add to queue · Spotify required' : 'Add to queue') : 'Spotify does not expose these tracks'}>+</button>
+            <button class="details" onclick={() => { details = t; player.queueOpen = false; player.view = ''; }} aria-label="Show tracks in {t.title}" title={access ? 'Why this card cannot play here' : 'Included tracks'}>☷</button>
+            <button class="add" onclick={() => addCollection(t)} disabled={!t.available} aria-label="Add {t.title} to queue{t.source === 'spotify' && !spotifyPlayable() ? ' · Spotify required' : ''}" title={t.indexing ? 'Album discovery in progress' : t.available ? (t.source === 'spotify' && !spotifyPlayable() ? 'Add to queue · Spotify required' : 'Add to queue') : access?.detail || 'No playable tracks are available'}>+</button>
           </span>
         </div>
       </div>
@@ -301,8 +303,8 @@
 {#if library.scan.scanning}<div class="scan">indexing… {library.scan.count} songs</div>{/if}
 {#if spotify.syncing || spotify.indexing || library.loading}<div class="library-status" role="status">{spotify.syncing || spotify.indexing ? spotify.progress : 'Loading music…'}</div>{/if}
 {#if spotify.indexError}<div class="library-status" role="alert">Album discovery paused: {spotify.indexError} Refresh Spotify in Settings to retry.</div>{/if}
-{#if library.mode === 'playlists' && spotify.inaccessiblePlaylists > 0}<p class="playlist-note">Spotify does not expose some playlists’ tracks. Their covers remain visible, but those tracks cannot contribute albums.</p>{/if}
-{#if details}<CollectionDetails tile={details} onclose={() => (details = null)} />{/if}
+{#if library.mode === 'playlists' && spotify.inaccessiblePlaylists > 0}<p class="playlist-note">Cards marked “Spotify only” open details with a link to Spotify. Their song lists are restricted, so Music cannot add them to your queue.</p>{/if}
+{#if currentDetails}<CollectionDetails tile={currentDetails} onclose={() => (details = null)} />{/if}
 {#if library.error}<div class="library-status" role="alert">{library.error}</div>{/if}
 
 {#if player.view === 'settings'}<Settings bind:art bind:motion onclose={() => (player.view = '')} />{/if}
@@ -452,7 +454,6 @@
   .controls .opt:hover { background: var(--ui-muted); color: var(--ui-text); }
   .controls .opt:disabled { color: #787880; cursor: default; background: transparent; }
   .controls .opt.on { background: var(--ui-accent); color: #111; }
-  .controls input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--ui-accent); cursor: pointer; }
 
   @media (max-width: 700px) {
     .controls { gap: 8px; }

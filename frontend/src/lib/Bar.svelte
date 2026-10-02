@@ -54,8 +54,14 @@
   // (Chrome sends a synthetic move when the layout under the pointer changes)
   let inCorner = '';
   function onmove(e: PointerEvent) { const now = atCorner(e, 2); if (now !== inCorner) openCorner(now); inCorner = now; }
-  function onclick(e: MouseEvent) { const t = e.target as Node; if (menu && !key?.contains(t) && !panel?.contains(t)) menu = false; }
+  function onclick(e: MouseEvent) {
+    const t = e.target as Node;
+    if (menu && !key?.contains(t) && !panel?.contains(t)) menu = false;
+    const target = e.target as Element;
+    if (target.closest('.bar') && !target.closest('.key')) revealPlayer();
+  }
   // a menu item that opens a view hands the screen to it
+  function revealPlayer() { player.queueOpen = true; }
   function share() { player.viewFrom = 'bottom'; player.view = player.view === 'share' ? '' : 'share'; menu = false; }
   function visualize() { player.visOpen = true; menu = false; }
 </script>
@@ -70,22 +76,25 @@
   {#if player.view === 'share'}<Share from={player.viewFrom} onclose={() => (player.view = '')} />{/if}
   <div class="menu-panel" class:open={menu} role="menu" aria-label="Playback options" aria-hidden={!menu} inert={!menu} bind:this={panel} onkeydown={menuKeys}>
     {#if session.admin}<button role="menuitem" tabindex={menu ? 0 : -1} class:on={player.view === 'share'} onclick={share}>Share</button>{/if}
+    <button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => { player.queueTab = 'history'; player.queueOpen = true; menu = false; }}>Recently played</button>
     <button role="menuitem" tabindex={menu ? 0 : -1} onclick={visualize}>Visualizer</button>
     {#if !player.song}<button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => { player.queueOpen = !player.queueOpen; menu = false; }}>Queue ({player.queue.length})</button>{/if}
     <button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => { player.shortcutsOpen = true; menu = false; }}>Keyboard shortcuts <span aria-hidden="true">?</span></button>
     <span class="rule"></span>
     <!-- stays open after a jump, so it can be pressed again right away -->
-    <button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => jumpRandom(grid)}>Shuffle</button>
-    <span class="orders" role="radiogroup" aria-label="Play order">
+    <button role="menuitem" tabindex={menu ? 0 : -1} onclick={() => jumpRandom(grid)}>Play a random song</button>
+    <span class="orders" role="group" aria-label="Play order">
       {#each Object.entries(ORDERS) as [o, label] (o)}
-        <button role="radio" tabindex={menu ? 0 : -1} aria-checked={player.order === o} aria-label={label} title={label} class:on={player.order === o} onclick={() => setOrder(o as Order, grid)}>
-          <svg viewBox="0 0 24 24" width="1.2em" height="1.2em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <button role="menuitemradio" tabindex={menu ? 0 : -1} aria-checked={player.order === o} aria-label={label} title={label} class:on={player.order === o} onclick={() => setOrder(o as Order, grid)}>
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             {#if o === 'normal'}<path d="M3 12h13M12 8l4 4-4 4M20 6v12" />
             {:else if o === 'shuffle'}<path d="M3 7h2.5c5.5 0 7.5 10 13 10H21M3 17h2.5c2.3 0 3.9-1.8 5.2-4M13.3 11c1.3-2.2 2.9-4 5.2-4H21M18 4l3 3-3 3M18 14l3 3-3 3" />
             {:else}<rect x="4" y="4" width="16" height="16" rx="3" />
               {#each [[8.5, 8.5], [15.5, 8.5], [12, 12], [8.5, 15.5], [15.5, 15.5]] as [cx, cy] (`${cx}${cy}`)}<circle {cx} {cy} r="1.1" fill="currentColor" stroke="none" />{/each}
             {/if}
           </svg>
+          <span>{label}</span>
+          <svg class="order-check" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>
         </button>
       {/each}
     </span>
@@ -95,10 +104,10 @@
       {#if player.error}<button onclick={() => { player.viewFrom = 'right'; player.view = 'settings'; }}>Settings</button><button onclick={() => (player.error = '')} aria-label="Dismiss playback message">×</button>{/if}
     </div>
   {/if}
-  <div class="bar" class:hidden={hidden && !player.queueOpen && !player.view && !menu && !player.pending && !player.error} class:lit={player.queueOpen || !!player.view || menu} bind:clientHeight={barHeight}>
+  <div class="bar" class:hidden={hidden && !player.queueOpen && !player.view && !menu && !player.pending && !player.error} class:lit={player.queueOpen || !!player.view || menu} bind:clientHeight={barHeight} role="group" aria-label="Playback bar">
     {#if player.song}
       <!-- cover + title + artist: one control that opens the song list -->
-      <button class="left" onclick={() => (player.queueOpen = !player.queueOpen)} aria-label="Show songs" aria-keyshortcuts="q" aria-expanded={player.queueOpen}>
+      <button class="left" onclick={revealPlayer} aria-label="Show songs" aria-keyshortcuts="q" aria-expanded={player.queueOpen}>
         <img src={player.song.cover} alt="" />
         <span class="meta"><b>{player.song.title}</b> <span>{player.song.artist}{#if player.song.album} · {player.song.album}{/if}</span></span>
       </button>
@@ -175,10 +184,6 @@
   .menu-panel button:hover { background: #ffffff14; opacity: 1; }
   .menu-panel button.on { opacity: 1; background: #ffffff1c; }
   .rule { height: 1px; background: #fff2; margin: calc(8 * var(--s)) calc(16 * var(--s)); }
-  /* play order: one row of equal options, the chosen one solid like the top bar's */
-  .orders { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(8 * var(--s)); padding: calc(4 * var(--s)) 0; }
-  .menu-panel .orders button { display: flex; justify-content: center; padding: calc(8 * var(--s)) 0; border: 1px solid #fff5; }
-  .menu-panel .orders button.on { background: #fff; color: #000; border-color: #fff; }
   @media (max-width: 700px) {
     .menu-panel { width: min(80vw, calc(600 * var(--s))); font-size: calc(40 * var(--s)); gap: calc(8 * var(--s)); }
     .menu-panel button { padding: calc(20 * var(--s)) calc(24 * var(--s)); }
@@ -220,11 +225,22 @@
   .progress::before { background: var(--play-line); }
   .progress i, .progress:hover i { background: var(--play-accent); }
   .menu-panel { width: 250px; padding: 12px; gap: 4px; background: var(--play-bar); color: var(--play-text); font: 14px/1.4 var(--ui-font); letter-spacing: 0; text-transform: none; }
-  .menu-panel button { min-height: 44px; box-sizing: border-box; padding: 10px 12px; opacity: 1; }
+  .menu-panel button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; box-sizing: border-box; padding: 10px 12px; opacity: 1; text-align: left; border-radius: var(--ui-radius); }
   .menu-panel button:focus-visible { outline: 2px solid var(--play-accent); outline-offset: -2px; }
   .menu-panel button:hover, .menu-panel button.on { background: var(--play-line); }
   .rule { background: var(--play-line); margin: 8px 12px; }
-  .menu-panel .orders button.on { background: var(--play-accent); color: var(--play-bar); border-color: var(--play-accent); }
+  .menu-panel .orders { display: flex; flex-direction: column; gap: 4px; }
+  .menu-panel .orders button { width: 100%; justify-content: flex-start; gap: 12px; border: 0; padding: 10px 12px; }
+  .menu-panel .orders button svg { flex-shrink: 0; }
+  .menu-panel .orders button span { flex: 1; text-align: left; }
+  .menu-panel .orders button.on { background: var(--play-line); color: var(--play-text); }
+  .order-check { visibility: hidden; }
+  .on .order-check { visibility: visible; }
+  .menu-panel button { transition: background-color 140ms ease-out; }
+  .menu-panel button:active { background: var(--play-line); }
+  .menu-panel button > span[aria-hidden] { color: var(--play-muted); margin-left: auto; }
+  .bar .key svg { width: 20px; height: 20px; }
+  .bar .key:hover, .bar .key.down { background: var(--play-line); }
   @media (max-width: 700px) {
     .bar { height: 112px; padding: 0 12px; padding-bottom: env(safe-area-inset-bottom, 0px); }
     .bar .left { position: absolute; top: 8px; left: 12px; height: 48px; max-width: calc(100% - 64px); padding: 0; margin: 0; font-size: 13px; }

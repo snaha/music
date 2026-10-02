@@ -15,7 +15,7 @@ const album = (a: AlbumID3): Tile => ({ id: localId('album', a.id), rawId: a.id,
 const playlist = (p: Playlist): Tile => ({ id: localId('playlist', p.id), rawId: p.id, source: 'local', cover: coverUrl(p.coverArt ?? `pl-${p.id}`), title: p.name, sub: 'playlist', kind: 'playlist', count: p.songCount ?? 1, available: true });
 export const localTrack = (s: Child): Track => ({ id: localId('track', s.id), rawId: s.id, source: 'local', title: s.title,
   artist: s.artist, album: s.album, albumId: s.albumId ? localId('album', s.albumId) : undefined,
-  cover: coverUrl(s.coverArt, 512), duration: s.duration, track: s.track, disc: s.discNumber, available: true });
+  coverId: s.coverArt, cover: coverUrl(s.coverArt, 512), duration: s.duration, track: s.track, disc: s.discNumber, available: true });
 
 function spotifyTiles(): Tile[] {
   if (!window.spotify) return [];
@@ -120,10 +120,10 @@ export async function pick(t: Tile) {
         if (!tracks.length) continue;
         if (version === undefined) {
           if (selection !== player.requestRevision) return;
-          version = play(tracks);
+          version = play(tracks.map(track => ({ ...track, playbackOrigin: t })));
           if (version < 0) return;
         }
-        else if (!appendToSession(tracks, version)) return;
+        else if (!appendToSession(tracks.map(track => ({ ...track, playbackOrigin: t })), version)) return;
       }
       if (version === undefined) throw new Error('This collection contains no music tracks.');
       return;
@@ -141,7 +141,7 @@ export function addCollection(t: Tile) {
     player.error = ''; let version: number | undefined;
     try {
       for await (const tracks of trackPages(t)) {
-        const included = tracks.filter(track => track.available);
+        const included = tracks.filter(track => track.available).map(track => ({ ...track, playbackOrigin: t }));
         if (!included.length) continue;
         if (version === undefined) version = enqueue(included);
         else if (!appendToSession(included, version)) return;
@@ -163,7 +163,8 @@ export function grid(): Grid {
       while (lo < hi) { const m = (lo + hi) >> 1; if (cum[m + 1] <= n) lo = m + 1; else hi = m; }
       const t = tiles[lo], songs = t && (await songsOf(t));
       if (!songs?.length) return;
-      return t.kind === 'artist' ? rnd(songs) : songs[n - cum[lo]] ?? rnd(songs);
+      const track = t.kind === 'artist' ? rnd(songs) : songs[n - cum[lo]] ?? rnd(songs);
+      return { ...track, playbackOrigin: t };
     },
   };
 }
