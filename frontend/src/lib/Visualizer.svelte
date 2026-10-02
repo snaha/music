@@ -32,7 +32,7 @@
   }
   // Milkdrop keys: Space next (blend), H hard cut, Backspace previous, R toggle cycling, Scroll Lock lock, T song title
   function onkeydown(e: KeyboardEvent) {
-    if (background) return;
+    if (background || e.ctrlKey || e.metaKey) return; // ctrl/cmd-T closes it (see App), it is not T for the title
     if (e.key === ' ') next(2.7, true);
     else if (e.key === 'h' || e.key === 'H') next(0, true);
     else if (e.key === 'Backspace') prev();

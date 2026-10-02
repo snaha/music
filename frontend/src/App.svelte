@@ -19,7 +19,10 @@
   function wake() { idle = false; player.topHidden = false; clearTimeout(idleTimer); idleTimer = setTimeout(() => (idle = true), 2500); }
 
   function onkeydown(e: KeyboardEvent) {
-    if ((e.target as HTMLElement).tagName === 'INPUT' || player.visOpen) return; // the visualizer owns the keys while open
+    // the visualizer, open and closed: ctrl/cmd-T as in iTunes, and V, since a browser tab keeps ctrl-T for itself
+    const combo = e.ctrlKey || e.metaKey, key = e.key.toLowerCase(), typing = (e.target as HTMLElement).tagName === 'INPUT';
+    if (!e.altKey && (combo ? key === 't' : key === 'v' && !typing)) { e.preventDefault(); player.visOpen = !player.visOpen; return wake(); }
+    if (typing || player.visOpen) return; // the visualizer owns the keys while open
     const n = Number(e.key);
     if (n >= 1 && n <= MODES.length) setMode(MODES[n - 1]);
     else if (e.key === ' ') { e.preventDefault(); toggle(); }
@@ -42,7 +45,7 @@
   <Grid tiles={library.tiles} onpick={pick} activeId={player.song?.albumId} hidden={idle} />
   <div class="hint" class:hidden={!hint}>
     {#each MODES as m, i}<span><b>{i + 1}</b> {m}</span>{/each}
-    <span><b>space</b> play</span><span><b>← →</b> track</span><span><b>?</b> help</span>
+    <span><b>space</b> play</span><span><b>← →</b> track</span><span><b>V</b> visualizer</span><span><b>?</b> help</span>
   </div>
   <Bar hidden={idle} />
   <!-- one visualizer for both places: behind the grid as the background material, and fullscreen. Opening it fullscreen
