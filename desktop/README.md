@@ -60,7 +60,9 @@ Fresh creates a new named folder, never clears an existing profile.
 ## Share a preview with GitHub Actions
 
 Open **Actions → desktop → Run workflow**, choose a branch, `preview`, and `mac`, `linux` or `both`, and enable **Publish a preview download page**.
-The workflow publishes a prerelease named `preview-<commit>-<run>` containing normal and portable packages, instructions and SHA-256 checksums. It does not replace the stable Latest release. Build-only runs and pull requests retain Actions artifacts instead.
+The workflow publishes a prerelease named `preview-<commit>-<run>` containing normal and portable packages, instructions and SHA-256 checksums. It does not replace the stable Latest release. Build-only runs retain Actions artifacts. Same-repository pull requests also update a `pr-<number>` prerelease and a download comment after checks and both platform builds pass; closing the PR removes that preview. Fork PRs retain artifacts without publishing.
+
+PR downloads use the existing **Music Preview** app identity and profile controls. Use Fresh or separate portable folders to keep experiments independent; normal Music data remains separate. Packaging resolves the app bundle from build metadata, so it does not depend on a hard-coded `Music.app` name.
 
 ```sh
 gh workflow run desktop.yml --ref jose/spotify-experiment -f channel=preview -f platforms=mac -f publish=true
