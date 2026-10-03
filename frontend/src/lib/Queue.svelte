@@ -1,50 +1,187 @@
 <script lang="ts">
-  import Drawer from './Drawer.svelte';
-  import { jump, player } from './player.svelte';
-
-  let { onclose }: { onclose: () => void } = $props();
+  import { keyboardScope } from './keyboard';
+  import { onMount, tick, type Snippet } from 'svelte';
+  import ArtworkView from './ArtworkView.svelte';
+  import Icon from './ui/icon.svelte';
+  import { jump, moveQueue, removeQueue, replayHistory, toggle, player } from './player.svelte';
+  import { listeningHistory, loadHistory, clearHistory, historyTrack, searchHistory, retryHistory } from './listening-history.svelte';
+  let historyQuery = $state('');
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  onMount(() => () => clearTimeout(searchTimer));
+  const recent = $derived(listeningHistory.entries);
+  const playedAt = (time: number) => new Date(time).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  let { onclose, palette, options }: { onclose: () => void; palette: string; options: Snippet } = $props();
+  let listElement = $state<HTMLDivElement>(), bodyElement = $state<HTMLDivElement>();
+  const tabScroll: Partial<Record<'queue' | 'history', number>> = {};
+  async function selectTab(tab: 'queue' | 'history') {
+    if (tab === player.queueTab) return;
+    const mobile = matchMedia('(max-width: 700px)').matches;
+    const scroller = mobile ? bodyElement : listElement;
+    const previous = scroller?.scrollTop || 0;
+    tabScroll[player.queueTab] = previous;
+    player.queueTab = tab; await tick(); scroller?.scrollTo({ top: tabScroll[tab] ?? (mobile ? previous : 0) });
+  }
+  function positionActions(event: ToggleEvent) {
+    if (event.newState !== 'open') return;
+    const menu = event.currentTarget as HTMLElement;
+    const trigger = document.querySelector<HTMLElement>(`[popovertarget="${menu.id}"]`);
+    if (!trigger) return;
+    const bounds = trigger.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(innerWidth - 168, bounds.right - 160))}px`;
+    menu.style.top = `${Math.max(8, Math.min(innerHeight - 164, bounds.bottom + 4))}px`;
+  }
+  function closeActions(event: MouseEvent) {
+    const menu = (event.currentTarget as HTMLElement).closest<HTMLElement>('[popover]');
+    menu?.hidePopover();
+    if (menu) document.querySelector<HTMLElement>(`[popovertarget="${menu.id}"]`)?.focus({ preventScroll: true });
+  }
+  function actionKeys(event: KeyboardEvent) {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); const menu = event.currentTarget as HTMLElement; menu.hidePopover(); document.querySelector<HTMLElement>(`[popovertarget="${menu.id}"]`)?.focus({ preventScroll: true }); return; }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    const items = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+  }
+  function listen(index: number) { if (index === player.index && player.song?.id === player.queue[index]?.id) void toggle(); else jump(index); }
+  let closeButton: HTMLButtonElement;
   const fmt = (s = 0) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-  // bring the playing song into view when the panel opens or the track changes
-  const reveal = (el: HTMLElement, active: boolean) => { $effect(() => { if (active) el.scrollIntoView({ block: 'center' }); }); };
+  function close() { onclose(); player.topHidden = true; }
+  onMount(() => {
+    loadHistory(); historyQuery = listeningHistory.query;
+    const previous = document.activeElement as HTMLElement | null;
+    closeButton.focus({ preventScroll: true });
+    return () => { if (previous?.isConnected && (document.activeElement === document.body || closeButton.closest('.now-playing')?.contains(document.activeElement))) previous.focus({ preventScroll: true }); else if (!previous?.isConnected && document.activeElement === document.body) document.querySelector<HTMLButtonElement>('[aria-label="Menu"]')?.focus({ preventScroll: true }); };
+  });
 </script>
 
-<!-- closing with the handle keeps the top bar hidden until the next interaction -->
-<Drawer onclose={() => { onclose(); player.topHidden = true; }}>
-  <div class="list">
-    {#each player.queue as s, i (`${i}:${s.id}`)}
-      <button class="song" class:current={i === player.index} onclick={() => jump(i)} use:reveal={i === player.index}>
-        <span class="n">{s.track ?? i + 1}</span>
-        <span class="t">{s.title}<small>{s.artist}</small></span>
-        <span class="d">{fmt(s.duration)}</span>
-      </button>
-    {/each}
-  </div>
-</Drawer>
+
+<ArtworkView id="player-view" className="now-playing" {palette} label="Now playing and queue" bind:listElement bind:bodyElement onkeydown={event => {
+  if (event.defaultPrevented) return;
+  if ((event.target as HTMLElement).closest('.select-song') && !event.altKey && !event.ctrlKey && !event.metaKey && ['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault(); event.stopPropagation();
+    const tracks = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('.select-song')];
+    const index = tracks.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tracks.length - 1 : Math.max(0, Math.min(tracks.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+    tracks[next]?.focus(); return;
+  }
+  if (event.key !== 'Escape') return;
+  event.preventDefault(); event.stopPropagation();
+  if (player.shortcutsOpen) { player.shortcutsOpen = false; return; }
+  const expanded = document.querySelector<HTMLElement>('#player-view [popover]:popover-open');
+  if (expanded) { expanded.hidePopover(); document.querySelector<HTMLElement>(`[popovertarget="${expanded.id}"]`)?.focus({ preventScroll: true }); }
+  else close();
+}}>
+  {#snippet header()}
+    <button class="detail-icon" bind:this={closeButton} onclick={close} aria-label="Close now playing"><Icon name="back" /></button>
+    <div class="detail-heading"><h1>{player.song?.album || player.song?.title || 'Your queue'}</h1><p>{player.song?.artist || 'Choose a track to start listening.'}</p></div>
+    {@render options()}
+  {/snippet}
+  {#snippet artwork()}
+      {#if player.song}
+        {#key player.song.cover}
+          <img class="detail-cover" src={player.song.cover} alt="{player.song.album || player.song.title} cover" />
+        {/key}
+        <div class="detail-art-meta">{#if player.song.playbackOrigin}<p>From {player.song.playbackOrigin.title}</p>{/if}</div>
+      {:else}
+        <div class="empty-art detail-cover"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2" /></svg></div>
+
+      {/if}
+  {/snippet}
+    <div class="list" aria-label={player.queueTab === 'history' ? 'Recently played tracks' : 'Queued tracks'}>
+      <div class="list-tabs" role="tablist" tabindex="-1" aria-label="Player views" onkeydown={event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault(); event.stopPropagation();
+        void selectTab(event.key === 'Home' ? 'queue' : event.key === 'End' ? 'history' : player.queueTab === 'queue' ? 'history' : 'queue');
+        requestAnimationFrame(() => document.getElementById(`player-tab-${player.queueTab}`)?.focus());
+      }}>
+        <button id="player-tab-queue" role="tab" aria-selected={player.queueTab === 'queue'} aria-controls="player-track-list" tabindex={player.queueTab === 'queue' ? 0 : -1} onclick={() => void selectTab('queue')}>Queue <span>{player.queue.length}</span></button>
+        <button id="player-tab-history" role="tab" aria-selected={player.queueTab === 'history'} aria-controls="player-track-list" tabindex={player.queueTab === 'history' ? 0 : -1} onclick={() => void selectTab('history')}>Recently played <span>{listeningHistory.total}</span></button>
+      </div>
+      <div id="player-track-list" aria-busy={player.queueTab === 'history' && listeningHistory.loading} role="tabpanel" aria-labelledby={`player-tab-${player.queueTab}`}>
+      {#if player.queueTab === 'history'}
+        <div class="history-heading"><span class="history-loading" role="status">{listeningHistory.loading ? 'Loading…' : ''}</span>{#if recent.length}<button class="clear-history" onclick={clearHistory}>Clear history</button>{/if}</div>
+        {#if window.musicHistory}
+          <input class="history-search" type="search" aria-label="Search listening history" placeholder="Search songs, artists, albums or playlists" bind:value={historyQuery} oninput={() => { clearTimeout(searchTimer); searchTimer = setTimeout(() => void searchHistory(historyQuery), 180); }} />
+        {/if}
+        {#if listeningHistory.error}<p role="status" class="empty">{listeningHistory.error} <button class="clear-history" onclick={retryHistory}>Retry</button></p>{/if}
+        {#if !recent.length && !listeningHistory.loading}<p class="empty">{historyQuery ? 'No plays match your search.' : 'Songs you play will appear here with the album or playlist they came from.'}</p>{/if}
+        {#each recent as entry (entry.id)}
+          {@const song = historyTrack(entry.context.queue[entry.index])}
+          {@const origin = song.playbackOrigin || entry.context.origin}
+          <div class="song">
+            <button class="select-song recent-song" onclick={() => replayHistory(entry)} disabled={!song.available} aria-label="Play {song.title} from {origin?.title || song.album || 'your queue'}">
+              {#if song.cover}<img class="history-cover" src={song.cover} alt="" loading="lazy" />{:else}<span class="history-cover placeholder" aria-hidden="true"></span>{/if}
+              <span class="t">{song.title}<small>{song.artist}</small><small>{origin ? `${origin.kind === 'playlist' ? 'Playlist' : origin.kind === 'album' ? 'Album' : 'Artist'} · ${origin.title}` : song.album || 'Queue'} · {song.source}{song.available ? '' : ' · unavailable'}</small></span>
+              <time datetime={new Date(entry.playedAt).toISOString()}>{playedAt(entry.playedAt)}</time>
+            </button>
+          </div>
+        {/each}
+        {#if listeningHistory.hasMore}<button class="clear-history" disabled={listeningHistory.loading} onclick={() => void searchHistory(historyQuery, true)}>Load older plays</button>{/if}
+      {:else}
+      {#if !player.queue.length}<p class="empty">Open an album or playlist and choose Add to queue from its menu.</p>{/if}
+      {#each player.queue as song, i (`${i}:${song.id}`)}
+        <div class="song" class:current={i === player.index}>
+          <button class="select-song" onclick={() => listen(i)} disabled={!song.available} aria-label="{i === player.index && (player.playing || player.pending) ? 'Pause' : 'Play'} {song.title}" aria-current={i === player.index ? 'true' : undefined}>
+            <span class="n">{#if i === player.index && player.pending}<span class="pending" aria-label="Connecting playback"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="7" stroke-dasharray="24 20" /></svg></span>{:else if i === player.index && player.playing && !player.suspended}<Icon name="listening" />{:else}{i + 1}{/if}</span>
+            <span class="t">{song.title}<small>{song.artist} · {song.source}{song.available ? '' : ' · unavailable'}</small></span>
+            <span class="d">{fmt(song.duration)}</span>
+          </button>
+          <button class="track-menu" popovertarget={`queue-actions-${i}`} aria-label="Actions for {song.title}" aria-haspopup="menu"><Icon name="more" /></button>
+          <div class="queue-actions" id={`queue-actions-${i}`} popover="auto" role="menu" aria-label="Actions for {song.title}" onbeforetoggle={positionActions} ontoggle={event => { if (event.newState === 'open') event.currentTarget.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true }); }} use:keyboardScope={actionKeys}>
+            <button role="menuitem" onclick={event => { moveQueue(i, i - 1); closeActions(event); }} disabled={i === 0} aria-label="Move {song.title} up">Move up</button>
+            <button role="menuitem" onclick={event => { moveQueue(i, i + 1); closeActions(event); }} disabled={i === player.queue.length - 1} aria-label="Move {song.title} down">Move down</button>
+            <button role="menuitem" onclick={event => { closeActions(event); removeQueue(i); void tick().then(() => { const tracks = listElement?.querySelectorAll<HTMLButtonElement>('.select-song:not(:disabled)'); tracks?.[Math.min(i, tracks.length - 1)]?.focus({ preventScroll: true }); }); }} aria-label="Remove {song.title}">Remove</button>
+          </div>
+        </div>
+      {/each}
+      {/if}
+      </div>
+    </div>
+</ArtworkView>
 
 <style>
-  .list { font-size: calc(16 * var(--s)); overflow-y: auto; padding: calc(8 * var(--s)) calc(24 * var(--s)) calc(24 * var(--s)); scrollbar-width: thin; scrollbar-color: #333 #0000; }
-  .song {
-    all: unset; cursor: pointer; display: grid; grid-template-columns: calc(48 * var(--s)) 1fr auto; align-items: center; gap: calc(16 * var(--s));
-    width: 100%; box-sizing: border-box; padding: calc(10 * var(--s)) calc(12 * var(--s)); border-radius: 2px; color: #bbb;
+  button { color: inherit; font: inherit; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--play-accent); outline-offset: -2px; }
+  .detail-art-meta p { margin: 16px 0 0; color: var(--play-muted); font-size: 13px; overflow-wrap: anywhere; }
+  .empty-art { background: var(--play-bar); display: grid; place-items: center; }
+  .list-tabs { position: sticky; top: 0; z-index: 1; background: var(--play-surface); display: flex; gap: 16px; border-bottom: 1px solid var(--play-line); margin-bottom: 20px; }
+  .list-tabs button { display: flex; gap: 8px; align-items: center; padding: 12px 0; min-height: 44px; border: 0; background: transparent; color: var(--play-muted); border-bottom: 2px solid transparent; font-weight: 550; white-space: nowrap; }
+  .list-tabs button span { color: var(--play-muted); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+  .list-tabs button[aria-selected=true] { color: var(--play-text); border-bottom-color: var(--play-accent); }
+  .list-tabs button:hover { color: var(--play-text); }
+  .song { display: flex; align-items: center; border-bottom: 1px solid var(--play-line); gap: 4px; position: relative; }
+  .song.current, .song:hover, .song:focus-within { background: var(--play-line); }
+  .select-song { border: 0; background: transparent; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 12px; min-height: 60px; align-items: center; flex: 1; min-width: 0; padding: 10px 12px; text-align: left; }
+  .n { color: var(--play-muted); font-size: 12px; font-variant-numeric: tabular-nums; display: grid; place-items: center; }
+  .current .n { color: var(--play-accent); }
+  .t { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
+  .t small { display: block; font-size: 12px; color: var(--play-muted); font-weight: 400; margin-top: 3px; }
+  .d { color: var(--play-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .track-menu { display: grid; place-items: center; flex-shrink: 0; width: 40px; min-height: 40px; padding: 0; background: transparent; border: 0; border-radius: 4px; }
+  .track-menu:hover { background: var(--play-line); }
+  .queue-actions { position: fixed; margin: 0; border: 0; color: var(--play-text); font: inherit; z-index: 9; width: 160px; box-sizing: border-box; background: var(--play-bar); padding: 6px;  box-shadow: 0 8px 24px #0003; border-radius: 4px; }
+  .queue-actions button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 10px 12px; min-height: 44px; }
+  .queue-actions button:hover, .clear-history:hover { background: var(--play-line); }
+  .history-search { width: 100%; box-sizing: border-box; min-height: 40px; margin-bottom: 16px; padding: 8px 0; font: inherit; color: var(--play-text); background: transparent; border: 0; border-bottom: 1px solid var(--play-line); border-radius: 0; }
+  .history-search::placeholder { color: var(--play-muted); opacity: 1; }
+  .history-loading { color: var(--play-muted); font-size: 12px; }
+  .history-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .clear-history { border: 0; background: transparent; color: var(--play-muted); font-size: 12px; min-height: 44px; padding: 8px; border-radius: 4px; }
+  .recent-song { grid-template-columns: 44px minmax(0, 1fr) auto; }
+  .history-cover { width: 44px; height: 44px; object-fit: contain; border-radius: 2px; }
+  .placeholder { background: var(--play-line); }
+  time { color: var(--play-muted); font-size: 11px; max-width: 90px; text-align: right; font-variant-numeric: tabular-nums; }
+  .pending { display: grid; place-items: center; } .pending svg { animation: spin 900ms linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .pending svg { animation: none; } }
+  .empty { color: var(--play-muted); line-height: 1.6; }
+  @media (max-width: 700px) {
+    .recent-song { grid-template-columns: 36px minmax(0, 1fr); }
+    .history-cover { width: 36px; height: 36px; }
+    time { grid-column: 2; max-width: none; text-align: left; }
+    .select-song { padding: 10px 4px; gap: 8px; }
+    .track-menu { width: 44px; min-height: 44px; }
+    .history-search { min-height: 44px; }
   }
-  .song:hover, .song:focus-visible { background: rgba(0, 0, 0, 0.35); color: #fff; }
-  /* current: darker than the panel, with the cards' glassy sheen and edge light */
-  .song.current {
-    color: #fff; font-size: 1.15em; border-radius: 0;
-    /* full panel width: cancel the list's side padding and keep the text aligned */
-    margin: calc(4 * var(--s)) calc(-24 * var(--s)); width: calc(100% + 48 * var(--s));
-    padding: calc(14 * var(--s)) calc(36 * var(--s));
-    background:
-      linear-gradient(115deg, #fff0 0%, #fff0 18%, rgba(255, 255, 255, 0.07) 30%, rgba(255, 255, 255, 0.02) 42%, #fff0 50%),
-      rgba(0, 0, 0, 0.6);
-    box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-      inset 1px 1px 0 rgba(255, 255, 255, 0.07),
-      inset -1px -1px 0 rgba(0, 0, 0, 0.3);
-  }
-  .n { opacity: .5; font-variant-numeric: tabular-nums; text-align: right; }
-  .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .t small { display: block; font-size: .8em; opacity: .55; }
-  .d { opacity: .5; font-variant-numeric: tabular-nums; }
-  .current .n::before { content: '▶'; font-size: .7em; margin-right: .4em; }
 </style>

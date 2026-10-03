@@ -2,3 +2,16 @@
 navidrome/data/
 # playwright screenshots from verification runs
 .playwright-mcp/
+# local credentials
+.env
+.env.*
+!.env.example
+
+# local web research output
+.firecrawl/
+
+# Agent audit screenshots and reports
+.audit-results/
+
+# Local design review captures
+.impeccable/review/

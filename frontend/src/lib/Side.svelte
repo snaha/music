@@ -1,113 +1,78 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
 
-  // a corner key in the top bar with a panel that continues the bar down that edge of the screen. On mouse the panel
-  // peeks as the pointer nears the key, opens fully when close by or over the panel, and slides out when the pointer
-  // moves away; on touch only the key toggles it. `pinned` keeps it open from outside (a view opened from the panel)
   let { side, label, touch, pinned = false, menu = $bindable(false), open = $bindable(false), width = $bindable(0), onunpin, children }: {
     side: 'left' | 'right'; label: string; touch: boolean; pinned?: boolean;
     menu?: boolean; open?: boolean; width?: number; onunpin?: () => void; children: Snippet;
   } = $props();
   const right = $derived(side === 'right');
-  let hoverOpen = $state(false), prox = $state(0);
-  // after the key closes the panel, hover must not reopen it until the pointer has moved away
-  let hoverMuted = false;
-  let corner: HTMLElement, panel: HTMLElement;
-  $effect(() => { open = menu || hoverOpen || pinned; });
+  let corner: HTMLElement, panel: HTMLElement, trigger: HTMLButtonElement;
+  $effect(() => { open = menu || pinned; });
 
-  // pointer distance from the centre of the key
-  function dist(e: MouseEvent) { const r = corner.getBoundingClientRect(); return Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2)); }
-  // the block from the key to the screen edge and from the top down to the key counts as on the key,
-  // so the screen corner itself (further from the key's centre than the hover radius) never reads as "away"
-  function atKey(e: MouseEvent) { const r = corner.getBoundingClientRect(); return (right ? e.clientX >= r.left - 8 : e.clientX <= r.right + 8) && e.clientY <= r.bottom + 8; }
-  function onmove(e: PointerEvent) {
-    if (touch || !corner) return;
-    const d = dist(e);
-    prox = Math.min(1, Math.max(0, 1 - d / 220));
-    const p = panel.getBoundingClientRect();
-    const overPanel = hoverOpen && (right ? e.clientX >= p.left - 8 : e.clientX <= p.right + 8) && e.clientY >= p.top;
-    const close = d < 90 || atKey(e) || overPanel;
-    if (!close) hoverMuted = false;
-    hoverOpen = close && !hoverMuted;
+  function close() { menu = false; if (pinned) onunpin?.(); }
+  function focusItem(last = false) {
+    const items = panel.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
+    (last ? items[items.length - 1] : items[0])?.focus();
+  }
+  function onkeydown(e: KeyboardEvent) {
+    const items = [...panel.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); trigger.focus(); }
+    else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+      e.preventDefault();
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      items[next]?.focus();
+    }
   }
 </script>
 
-<!-- the pointer leaves the window when it is slammed into the screen corner (frameless window, second monitor):
-     leaving near the key opens the panel or keeps it open, leaving anywhere else closes it -->
-<svelte:document onmouseleave={(e) => { prox = 0; hoverOpen = !touch && !!corner && (dist(e) < 220 || atKey(e)) && !hoverMuted; }} />
-<!-- .panel: closing a view opened from here with its chevron keeps the menu open -->
-<svelte:window onclick={(e) => { const t = e.target as Element; if (menu && !pinned && !corner.contains(t) && !panel.contains(t) && !t.closest('.panel')) menu = false; }} onpointermove={onmove} />
+<svelte:window onpointerdown={(e) => { const target = e.target as Node; if (open && !pinned && !corner.contains(target) && !panel.contains(target)) close(); }} />
 
-<!-- while the panel is open for any reason (menu, hover, pinned) a press closes it all, so the depressed key always works as a close key on touch -->
 <span class="corner" class:right bind:this={corner}>
-  <button class="menu" class:down={open} style:--prox={prox.toFixed(2)} onclick={() => { if (pinned) onunpin?.(); menu = !open; hoverMuted = !menu; hoverOpen = false; }} aria-haspopup="menu" aria-expanded={open}>
-    <svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+  <button class="menu" class:down={open} bind:this={trigger} aria-label={right ? 'Display menu' : 'Library menu'} aria-haspopup="menu" aria-expanded={open}
+    onclick={async (e) => { if (open) close(); else { menu = true; if (e.detail === 0) { await tick(); focusItem(); } } }}
+    onkeydown={(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); menu = true; requestAnimationFrame(() => focusItem(e.key === 'ArrowUp')); } else if (e.key === 'Escape') { e.stopPropagation(); close(); } }}>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      {#if right}<path d="M4 4h16v6H4zM4 14h6v6H4zM14 14h6v6h-6z" />{:else}<path d="M4 6h16M4 12h16M4 18h16" />{/if}
+    </svg>
     <span class="cur">{label}</span>
+    <svg class="chevron" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4 6 4 4 4-4" /></svg>
   </button>
 </span>
 
-<!-- hidden fully off-screen, peeks as the pointer approaches the key -->
-<div class="side" class:right class:open role="menu" aria-hidden={!open} bind:this={panel} bind:clientWidth={width}
-  style:transform={open ? 'translateX(0)' : `translateX(calc(${right ? 1 : -1} * (100% - ${(prox * 12).toFixed(1)}px)))`}>
+<div class="side" class:right class:open class:touch role="menu" aria-label={right ? 'Display menu' : 'Library menu'} aria-hidden={!open} inert={!open}
+  bind:this={panel} bind:clientWidth={width} {onkeydown}
+  onclick={async (e) => { if (e.detail === 0) { await tick(); if (!open) trigger.focus(); } }}
+  onfocusout={(e) => { if (e.relatedTarget instanceof Node && !panel.contains(e.relatedTarget) && !corner.contains(e.relatedTarget) && !pinned) close(); }}>
   {@render children()}
 </div>
 
 <style>
-  .corner { position: absolute; left: calc(20 * var(--s)); top: 50%; transform: translateY(-50%); }
-  .corner.right { left: auto; right: calc(20 * var(--s)); }
-  /* the key: subtle brushed metal. It lifts and brightens as the pointer approaches (--prox 0…1) and sits pressed in
-     while the panel is open. The label sits on the key's inner side, so the icon marks the screen edge */
-  .menu {
-    all: unset; cursor: pointer; position: relative; overflow: hidden; display: flex; flex-direction: row-reverse; align-items: center; gap: calc(8 * var(--s));
-    padding: calc(6 * var(--s)) calc(12 * var(--s)); border-radius: 4px; border: 1px solid #000;
-    background: linear-gradient(170deg, #3b3b3b, #232323 55%, #2b2b2b);
-    box-shadow: inset 0 1px 0 #ffffff26, inset 0 -1px 0 #00000090, 0 1px 2px #000b;
-    opacity: calc(0.6 + 0.4 * var(--prox, 0));
-    transform: translateY(calc(-1.5px * var(--prox, 0)));
-    transition: transform 160ms, box-shadow 160ms, background 160ms, opacity 160ms;
-  }
-  .right .menu { flex-direction: row; }
-  .menu::after { /* light sweep that travels across (towards the screen edge) as you get closer */
-    content: ''; position: absolute; inset: 0; pointer-events: none;
-    background: linear-gradient(100deg, #fff0 30%, #ffffff1c 50%, #fff0 70%);
-    transform: translateX(calc(120% - 240% * var(--prox, 0)));
-    transition: transform 160ms;
-  }
-  .right .menu::after { transform: translateX(calc(-120% + 240% * var(--prox, 0))); }
-  .menu:hover { box-shadow: inset 0 1px 0 #ffffff33, inset 0 -1px 0 #00000090, 0 2px 4px #000c; }
-  .menu.down {
-    background: linear-gradient(170deg, #1a1a1a, #262626);
-    box-shadow: inset 0 2px 4px #000d, inset 0 -1px 0 #ffffff12; transform: translateY(1px); opacity: 1;
-  }
-  .menu.down::after { transform: translateX(-120%); }
-  .right .menu.down::after { transform: translateX(120%); }
-  .cur { font-size: .7em; opacity: .8; }
-  /* phones: the keys have the bar's first row to themselves, so they sit in its middle rather than the bar's,
-     and are bigger for thumbs; the right one shows only its icon */
+  .corner { position: absolute; left: 20px; top: 24px; }
+  .corner.right { left: auto; right: 20px; }
+  .menu { font: inherit; cursor: pointer; display: flex; align-items: center; gap: 10px; min-height: 40px; box-sizing: border-box; padding: 8px 12px; border: 0; border-radius: 6px; color: var(--ui-text); background: transparent; transition: color 140ms, background 140ms; }
+  .menu:hover { background: var(--ui-muted); color: var(--ui-text); }
+  .menu.down { color: var(--ui-accent); background: var(--ui-muted); }
+  .menu:focus-visible, .side :global(button:focus-visible) { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
+  .chevron { transition: transform 180ms ease-out; }
+  .down .chevron { transform: rotate(180deg); }
+  .side { position: fixed; top: var(--topbar, 0px); left: 12px; width: 200px; max-height: calc(100dvh - var(--topbar, 0px) - 120px); overflow-y: auto; box-sizing: border-box;
+    display: flex; flex-direction: column; gap: 4px; padding: 8px;
+    background: var(--ui-surface); border-radius: 12px; box-shadow: 0 12px 32px #0006;
+    color: var(--ui-text); font: 13px/1.4 system-ui, sans-serif; user-select: none; scrollbar-width: thin; scrollbar-color: #686871 transparent;
+    pointer-events: none; opacity: 0; transform: translateY(-6px);
+    transition: transform 180ms cubic-bezier(.16,1,.3,1), opacity 140ms ease-out; }
+  .side.right { left: auto; right: 12px; }
+  .side.open { pointer-events: auto; opacity: 1; transform: translateY(0); }
+  .side :global(button) { font: inherit; text-align: left; cursor: pointer; min-height: 40px; flex-shrink: 0; padding: 10px 12px; border: 0; border-radius: 6px; color: var(--ui-text); background: transparent; transition: color 140ms, background 140ms; }
+  .side :global(button:hover) { background: var(--ui-muted); color: var(--ui-text); }
+  .side :global(button.on) { color: var(--ui-accent); background: var(--ui-muted); }
+  .side :global(.rule) { flex-shrink: 0; height: 1px; background: #ffffff1c; margin: 4px 12px; }
   @media (max-width: 700px) {
-    .corner { top: calc(48 * var(--s)); }
-    .menu { font-size: calc(36 * var(--s)); padding: calc(10 * var(--s)) calc(18 * var(--s)); }
-    .right .cur { display: none; }
+    .corner { top: 12px; left: 12px; }
+    .corner.right { left: auto; right: 12px; }
+    .menu, .side :global(button) { min-height: 44px; }
+    .side { width: min(240px, calc(100vw - 24px)); }
   }
-  /* the panel lives inside the top bar, so it fades with it; same tone, no border: one L-shaped surface */
-  .side {
-    --s: clamp(0.5px, 100vw / 1600, 1px);
-    position: fixed; top: var(--topbar, 0px); left: 0; bottom: 0; width: min(80vw, calc(340 * var(--s))); box-sizing: border-box;
-    display: flex; flex-direction: column; gap: calc(4 * var(--s)); padding: calc(16 * var(--s)) calc(20 * var(--s));
-    background: rgba(0, 0, 0, 0.6);
-    color: #fff; font-size: calc(24 * var(--s)); letter-spacing: .08em; text-transform: uppercase; user-select: none;
-    pointer-events: none; transition: transform 320ms cubic-bezier(.2,.8,.2,1), background 200ms;
-  }
-  .side.right { left: auto; right: 0; }
-  :global(.lit) > .side { background: rgba(0, 0, 0, 0.78); } /* a bit darker while the bar is hovered or a panel is open */
-  .side.open { pointer-events: auto; }
-  .side :global(button) { all: unset; cursor: pointer; padding: calc(12 * var(--s)) calc(16 * var(--s)); border-radius: 3px; opacity: .7; }
-  .side :global(button:hover) { background: #ffffff14; opacity: 1; }
-  .side :global(button.on) { opacity: 1; background: #ffffff1c; }
-  .side :global(.rule) { height: 1px; background: #fff2; margin: calc(8 * var(--s)) calc(16 * var(--s)); }
-  /* phones: bigger type and roomier rows for thumbs */
-  @media (max-width: 700px) {
-    .side { width: min(80vw, calc(600 * var(--s))); font-size: calc(40 * var(--s)); gap: calc(8 * var(--s)); }
-    .side :global(button) { padding: calc(20 * var(--s)) calc(24 * var(--s)); }
-  }
+  @media (prefers-reduced-motion: reduce) { .menu, .chevron, .side, .side :global(button) { transition: none; } }
 </style>
