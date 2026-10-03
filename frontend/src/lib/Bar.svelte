@@ -13,7 +13,7 @@
   // icons after VLC's: an arrow into a stop bar for in order, crossing arrows for shuffle; a die for random, which VLC lacks
   const ORDERS: Record<Order, string> = { normal: 'In order', shuffle: 'Shuffle album', random: 'Random from the grid' };
   // the bottom-right menu: share, visualizer and play order. It stays open until closed like the song list
-  let menu = $state(false), key: HTMLElement, panel: HTMLElement;
+  let menu = $state(false), key = $state<HTMLElement>(), panel = $state<HTMLElement>();
   // hot corners: the pointer pushed into a bottom screen corner opens what that corner holds, which then stays until closed:
   // the song list on the left (only with a song loaded, like the button it stands in for), the menu on the right.
   // mouse only, and only while the bar shows
@@ -142,7 +142,6 @@
   }
   .ctl { display: flex; flex-direction: column; align-items: center; gap: 0; flex-shrink: 0; }
   .btns { display: flex; align-items: center; }
-  .btns svg { display: block; }
   .time { opacity: .7; font-size: .7em; font-variant-numeric: tabular-nums; }
   /* phones: let title/artist take two lines */
   @media (max-width: 700px) {

@@ -2,6 +2,7 @@
   import { Spring } from 'svelte/motion';
   import { library, MODES, setMode, type Tile } from './library.svelte';
   import { player } from './player.svelte';
+  import { matches } from './search';
   import { session } from './api.svelte';
   import Side from './Side.svelte';
   import Settings from './Settings.svelte';
@@ -29,8 +30,7 @@
   // search set: filter as you type over title and subtitle (artist name for albums)
   let query = $state('');
   let shown = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    return tiles.filter((t) => (!art || t.cover || t.id === activeId) && (!q || `${t.title} ${t.sub}`.toLowerCase().includes(q)));
+    return tiles.filter((t) => (!art || t.cover || t.id === activeId) && matches(`${t.title} ${t.sub}`, query));
   });
   $effect(() => { library.visible = shown; });
 
