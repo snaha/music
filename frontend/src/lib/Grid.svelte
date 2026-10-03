@@ -99,12 +99,15 @@
 <div class="scroll" class:fill={!bg.tile} class:m-vinyl={!bg.scroll && bg.material === 'vinyl'} class:m-grille={!bg.scroll && bg.material === 'grille'}
   class:m-fabric={!bg.scroll && bg.material === 'fabric'} class:m-custom={!bg.scroll && bg.material === 'custom'} style:--custom={bg.custom ? `url("${bg.custom}")` : 'none'} {onscroll} bind:this={scroller}>
   <div class="grid" class:m-vinyl={bg.scroll && bg.material === 'vinyl'} class:m-grille={bg.scroll && bg.material === 'grille'}
-    class:m-fabric={bg.scroll && bg.material === 'fabric'} class:m-custom={bg.scroll && bg.material === 'custom'} style:--cols={cols} style:--gap="max(0.2px, calc({gap} * var(--u)))"
-    style:transform="translate3d({drift.current.x * -8}px, {drift.current.y * -6}px, 0)">
+    class:m-fabric={bg.scroll && bg.material === 'fabric'} class:m-custom={bg.scroll && bg.material === 'custom'} style:--cols={cols} style:--gap="max(0.2px, calc({gap} * var(--u)))"    style:transform="translate3d({drift.current.x * -8}px, {drift.current.y * -6}px, 0)">
     {#each shown as t (t.id)}
-      <button class="tile" class:active={t.id === activeId} onclick={() => pick(t)} aria-label="{t.title} — {t.sub}">
-        <img src={t.cover} alt={t.title} loading="lazy" draggable="false" />
+      <!-- hover: light border, play key and the names over a gradient; playing: strong border and a live equalizer;
+           no cover: the names stay on, in place of a broken image -->
+      <button class="tile" class:active={t.id === activeId} class:noart={!t.cover} onclick={() => pick(t)} aria-label="{t.title} — {t.sub}">
+        {#if t.cover}<img src={t.cover} alt="" loading="lazy" draggable="false" />{/if}
         <i></i>
+        <span class="names" aria-hidden="true"><b>{t.title}</b><span>{t.sub}</span></span>
+        <span class="key" aria-hidden="true"></span>
       </button>
     {/each}
   </div>
@@ -212,10 +215,34 @@
       inset 1px 1px 0 rgba(255, 255, 255, 0.07),
       inset -1px -1px 0 rgba(0, 0, 0, 0.2);
     transition: opacity 200ms; }
+  /* Figma Frame 43: hover is a 2px light border with a soft white glow; playing is an 8px white border.
+     Both are strokes outside the tile, as in the design: an outline grows into the gap, the cover stays whole and nothing shifts */
   .tile:hover, .tile:focus-visible { z-index: 1;
-    box-shadow: 0 6px 8px -3px rgba(0, 0, 0, 0.85); }
+    outline: 2px solid #fafafa; outline-offset: 0;
+    box-shadow: 0 0 16px 4px rgba(255, 255, 255, 0.5); }
   .tile:hover i { opacity: .7; }
-  .tile.active { box-shadow: 0 0 0 2px #fff, 0 0 50px #fff5; }
+  .tile.active { z-index: 1; outline: 8px solid #fafafa; outline-offset: 0; box-shadow: none; }
+  /* the names: bold title and regular artist over a gradient rising from the bottom edge */
+  .names { position: absolute; left: 0; right: 0; bottom: 0; top: 50%; padding: 8px; box-sizing: border-box;
+    display: flex; flex-direction: column; justify-content: flex-end; text-align: left; overflow-wrap: anywhere;
+    color: #fafafa; font: 400 14px/20px system-ui, sans-serif; letter-spacing: 0; text-transform: none;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.7)); opacity: 0; transition: opacity 150ms; pointer-events: none; }
+  .names b { font-weight: 700; }
+  .names > span, .names > b { display: block; width: 100%; }
+  .tile:hover .names, .tile:focus-visible .names, .tile.noart .names { opacity: 1; }
+  .tile.noart .names { top: 0; }
+  /* the key in the top-right corner: a 32px secondary button holding a 16px icon, play on hover, equalizer while playing.
+     The icons are the design's SVGs used as masks, so they take the foreground colour */
+  .key { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; border-radius: 10px; background: #262626;
+    display: none; align-items: center; justify-content: center; pointer-events: none; }
+  .key::after { content: ''; width: 16px; height: 16px; background: #fafafa; mask: url('./icons/play.svg') center / 16px 16px no-repeat; }
+  .tile:hover .key, .tile:focus-visible .key, .tile.active .key { display: flex; }
+  .tile.active .key::after { mask-image: url('./icons/equalizer.svg');
+    /* the bars move: a band of light rolls up through the mask */
+    background: linear-gradient(to bottom, #fafafa 0 25%, #fafafa66 50%, #fafafa 75%, #fafafa66 100%) 0 0 / 100% 200%;
+    animation: eq 900ms linear infinite; }
+  @keyframes eq { to { background-position: 0 -32px; } }
+  @media (prefers-reduced-motion: reduce) { .tile.active .key::after { animation: none; background: #fafafa; } }
   .controls {
     /* sizes scale with the viewport between phone and desktop */
     --s: clamp(0.5px, 100vw / 1600, 1px);
