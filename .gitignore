@@ -2,3 +2,6 @@
 navidrome/data/
 # playwright screenshots from verification runs
 .playwright-mcp/
+# tagsmith dependencies and dry-run state
+tagsmith/node_modules/
+tagsmith/work/
