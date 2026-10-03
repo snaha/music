@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, screen } from 'electron';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -29,6 +29,7 @@ async function state(dataDir) {
   const st = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : { username: 'admin', password: randomBytes(18).toString('base64url') };
   st.sharePassword ??= randomBytes(12).toString('base64url');
   st.frame ??= true; // the OS's own title bar and window buttons
+  st.scale ??= 'default'; // UI scale: the OS's own, or 1, 1.5, 2
   if (!st.port || !(await isFree(st.port))) st.port = await freePort();
   if (!st.webPort || !(await isFree(st.webPort))) st.webPort = await freePort();
   save(dataDir, st);
@@ -100,7 +101,7 @@ app.whenReady().then(async () => {
   // a frame can't be added to or removed from an open window, so the window is built anew for it
   async function open(bounds, maximized) {
     const desktop = {
-      url: local, username: st.username, password: st.password, frame: st.frame,
+      url: local, username: st.username, password: st.password, frame: st.frame, scale: st.scale,
       share: { webPort: st.webPort, port: st.port, password: st.sharePassword },
     };
     const win = new BrowserWindow({
@@ -111,10 +112,20 @@ app.whenReady().then(async () => {
       if (input.control && input.key.toLowerCase() === 'q') { e.preventDefault(); app.quit(); }
     });
     await win.loadURL(page);
+    applyScale(win);
     if (maximized) win.maximize();
     win.show();
     return win;
   }
+  // a fixed scale is a zoom relative to the display the window sits on: 2 on a 1x display is zoom 2, on a 2x display zoom 1
+  function applyScale(win) {
+    const display = screen.getDisplayMatching(win.getBounds()).scaleFactor || 1;
+    win.webContents.setZoomFactor(st.scale === 'default' ? 1 : st.scale / display);
+  }
+  ipcMain.handle('set-scale', (e, s) => {
+    st.scale = [1, 1.5, 2].includes(s) ? s : 'default'; save(dataDir, st);
+    applyScale(BrowserWindow.fromWebContents(e.sender));
+  });
   // the old window closes only once the new one shows, so the app never has no window (which would quit it)
   ipcMain.handle('set-frame', async (e, on) => {
     const old = BrowserWindow.fromWebContents(e.sender);
