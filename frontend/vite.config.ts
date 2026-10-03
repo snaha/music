@@ -1,6 +1,7 @@
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import os from 'node:os'
 import { defineConfig } from 'vite'
+import { wgslVitePlugin } from 'vgpu/client'
 
 // this machine's LAN address, so a share link made on localhost still opens on a phone
 const lanIp = Object.values(os.networkInterfaces()).flat()
@@ -8,6 +9,7 @@ const lanIp = Object.values(os.networkInterfaces()).flat()
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [svelte(), wgslVitePlugin({ minify: true })],
+  build: { target: 'esnext' },
   define: { __LAN_IP__: JSON.stringify(lanIp) },
 })

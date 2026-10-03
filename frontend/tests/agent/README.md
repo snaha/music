@@ -12,9 +12,14 @@ pnpm --dir frontend audit:serve
 ```
 
 Opens a loopback server at http://127.0.0.1:4178 after building the frontend.
-Contains 240 synthetic albums, a playlist, long titles and multiple discs. Local
-API and Spotify playback are mocked. Listening history uses an isolated temporary
+Contains 240 synthetic library albums, Liked Songs, a restricted playlist, and
+Night flights: twelve tracks from six distinct album identities over three pages.
+The six artwork-study covers are explicitly synthetic inline SVGs. Long titles
+and multiple discs are also included. Local API and Spotify playback are mocked. The synthetic desktop bridge reports a
+ready profile through the current startup API; it does not open or modify real profiles. Listening history uses an isolated temporary
 SQLite database, deleted when the fixture server stops. No real library, tokens or audio are used.
+The history fixture requires SQLite FTS5. If the shell Node lacks it, use
+`fnm exec --using 22.21.0 pnpm --dir frontend audit:serve`.
 Reload resets the fixture's browser preferences. Keep the fixture separate from
 the actual app, whose settings and playback are real.
 
@@ -67,3 +72,107 @@ approval of every screenshot remains a separate review. This is intentionally
 recorded as pending in results.json.
 
 Official agent-browser command reference: https://agent-browser.dev/commands
+
+## Chronocity artwork flight
+
+With the fixture running:
+
+```sh
+pnpm --dir frontend audit:chronocity
+```
+
+This uses the isolated `music-chronocity` browser session and closes it afterward.
+`MUSIC_AUDIT_SESSION` overrides the session, `MUSIC_AUDIT_URL` overrides the fixture
+URL, and `MUSIC_AUDIT_PORT` overrides the default 4178 port. Browser executable and
+CLI configuration use the same variables described above.
+
+At all four viewport sizes the runner checks a real 3D canvas, XYZ camera movement,
+turning and held keys without playback shortcuts, original artwork by default,
+optional foil, release-year/Undated navigation, metadata refresh continuity,
+shared play/pause and queue, details and cover-wall scroll preservation. Playlist
+checks cover incremental album-identity grouping, leaving during an outstanding
+request, automatic proximity expansion, individual album details, motion pause,
+collection collapse and restricted-playlist error reporting. Cinematic checks
+cover opt-in state,
+start/arc camera movement, immediate manual/Escape takeover and a stable stopped
+pose; the 1440×900 pass also checks neighbor advance and overlay time suspension.
+The tail checks tour-driven playlist entry, reduced-motion preference changes
+and manual Approach, then forced WebGL2 rendering and a cinematic shot.
+Additional 1440×900 captures show
+outer artwork slots 20/21, the former environment snap boundary near z = −85 and
+the section-streaming boundary near z = −170. Inspect these before/after images
+for artwork/approach clearance and stable scenery; the runner records capture
+completion, not an automated visual verdict. Also inspect expanded playlist
+artwork clearance. Select changes use native change events
+through eval because the installed CLI rejects its own select values payload.
+The installed media command also has a CLI/daemon protocol mismatch, so the
+reduced-motion check simulates the MediaQueryList `matches`/`change` contract
+in-page. It does not exercise the native OS preference.
+
+For a focused continuation of only playlist tour entry, reduced motion and
+WebGL cinematic checks, run:
+
+```sh
+MUSIC_AUDIT_CINEMA_EDGES_ONLY=1 pnpm --dir frontend audit:chronocity
+```
+
+This skips the four-viewport matrix and outer-slot/boundary captures. The default
+full runner includes these new checks after that matrix.
+
+Screenshots, failures and results go to `.audit-results/chronocity-<timestamp>/`.
+The runner deliberately records visual review as pending: inspect the actual
+images separately, including foreground cover readability, control contrast,
+phone framing, weathered industrial geometry, warm/cool lighting and steam/haze.
+Check the WebGL2 capture as well as WebGPU. The key-light shadow map is disabled
+on coarse-pointer devices; a narrow desktop viewport alone does not exercise
+that resource policy. No approved Chronocity reference exists yet. Physical touch,
+phone frame rate, native Mac-app interaction, live Spotify, real cover CORS and
+audio capture are separate checks, not established by viewport emulation.
+
+2026-10-03: `.audit-results/chronocity-2026-10-03T08-59-15-314Z/results.json`
+records passing assertions at all four WebGPU sizes and on WebGL2 after the
+industrial atmosphere refinement. Frontend check passed with zero errors/warnings;
+the desktop test command passed 32 desktop plus 16 frontend tests, and desktop
+build:frontend passed. Check and build passed again after the review fixes that
+reserve artwork/approach space and replace camera-snapping scenery with nine
+fixed world sections. That atmosphere audit includes valid, opened captures of outer
+slots 20/21 and both boundary crossings. The same finish reviewer personally
+inspected all 11 supplied captures and returned **ship**, with artwork/approach
+clearance, scenery continuity and documentation accuracy all **resolved**. The
+verdict covers those three fixes only. The runner's automatic pending marker in
+results.json is distinct from this completed finish review. The earlier **ship**
+verdict covered protected text readability and complete selected artwork framing
+on phone before this refinement. Neither review nor assertions establish
+photorealism, phone performance or whole-app visual approval.
+The general `audit:regressions` run is currently blocked by its stale
+`.tile-actions` selector from an earlier artwork-view change. Its older pass above
+does not certify the current app.
+
+2026-10-03, subsequent cinematic refinement: the main run at
+`.audit-results/chronocity-2026-10-03T09-38-14-579Z/results.json` passed all four
+WebGPU sizes, including the cinematic and existing scenarios, then failed at
+the installed CLI's media protocol mismatch. The failed entry is retained.
+The focused continuation at
+`.audit-results/chronocity-2026-10-03T09-42-31-411Z/results.json` passed playlist
+proximity entry, simulated MediaQueryList reduced-motion interruption, manual
+movement/Approach and WebGL cinematic rendering. Together these are scoped
+combined evidence, not a single clean full run. Frontend check passed with zero
+errors/warnings; desktop tests passed 32 desktop plus 18 frontend tests (50 total),
+and desktop build:frontend passed.
+
+A fresh Astra finish reviewer returned **ship** for the cinematic refinement
+with no material code findings after personally inspecting all eight start/arc
+captures at the four sizes plus playlist-entry, reduced-motion and WebGL
+cinematic captures. Selected covers were fully framed and controls accessible
+in those views. This covers inspected framing and control logic; live motion
+quality, every transfer path, native OS reduced-motion changes, physical-phone
+touch/FPS, the native Mac app, real-cover CORS, live Spotify and whole-app
+certification remain outside that verdict. A detector pass returned no findings.
+The general regression suite was not rerun for this refinement; its stale
+`.tile-actions` blocker remains unresolved.
+
+See `frontend/CHRONOCITY.md` for launch commands, the scoped surface brief, actual
+controls, data and resource limits, incumbent-system comparison and provenance.
+Stop temporary fixture servers and close any additional manual audit sessions;
+reset viewport overrides after browser checks. Validate the actual repository-local
+Mac app separately while preserving accounts, preferences, permissions and playback.

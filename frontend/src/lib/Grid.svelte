@@ -1,6 +1,6 @@
 <script lang="ts">
   import { keyboardScope } from './keyboard';
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy, untrack, type Component } from 'svelte';
   import Icon from './ui/icon.svelte';
   import Button from './ui/button.svelte';
   import Slider from './ui/slider.svelte';
@@ -49,9 +49,22 @@
     localStorage.setItem('artwork.visible', art ? '1' : '0'); localStorage.setItem('motion', motion ? '1' : '0');
     localStorage.setItem('library.source', library.source); localStorage.setItem('library.highlight', library.highlight ? '1' : '0');
   });
+  let cityEnabled = $state(false);
+  let City = $state<Component<import('svelte').ComponentProps<typeof import('./Chronocity.svelte').default>> | null>(null);
+  let cityLoading = $state(false), cityError = $state('');
+  async function toggleCity() {
+    cityEnabled = !cityEnabled;
+    if (cityEnabled && !City && !cityLoading) {
+      cityLoading = true; cityError = '';
+      try { City = (await import('./Chronocity.svelte')).default; }
+      catch { cityError = 'Chronocity could not load. Try opening it again.'; cityEnabled = false; }
+      finally { cityLoading = false; }
+    }
+  }
   let query = $state('');
   let searchKind = $state('all');
   const searching = $derived(!!query.trim());
+  const cityActive = $derived(cityEnabled && !searching);
   const searchAccount = $derived(JSON.stringify([session.base, session.username, spotify.account]));
   const scanCount = $derived(library.scan.count);
   const spotifySearchRevision = $derived(JSON.stringify([...spotify.albums, ...spotify.collections].map(tile => [tile.id, tile.title, tile.sub, tile.count, tile.available, tile.indexing])));
@@ -81,6 +94,7 @@
     if (!candidates.length) return;
     const tile = candidates[Math.floor(Math.random() * candidates.length)];
     discoveryId = tile.id;
+    if (cityActive) return;
     const index = shown.findIndex(t => t.id === tile.id);
     scroller?.scrollTo({ top: Math.floor(index / effectiveCols) * rowStep, behavior: 'instant' });
   }
@@ -97,6 +111,7 @@
   const spotifyAlbumCount = $derived(spotify.albums.length);
   const spotifyPlaylistCount = $derived(spotify.collections.filter((t) => t.kind === 'playlist' && t.id !== 'spotify:liked').length);
   const hasLiked = $derived(spotify.collections.some((t) => t.id === 'spotify:liked'));
+  const routeKey = $derived(JSON.stringify([library.mode, library.source, query, artistFilter, sort, sortDirection, sortRevision, randomSeed, showFilter, favoritesOnly, dig.moodOn, dig.mood, dig.energy, dig.familiarity, dig.acoustic, dig.vocal]));
   let orderKey = '', tileOrder: string[] = [];
   let shown = $derived.by(() => {
     const words = normalize(query).trim().split(/\s+/).filter(Boolean);
@@ -113,7 +128,7 @@
     if (sortDirection === -1 && sort !== 'random') result.reverse();
     if (digActive()) result.sort((a, b) => digScore(b) - digScore(a));
     // Background discovery replaces existing covers in place; new matches append until the next explicit filter/sort.
-    const key = JSON.stringify([library.mode, library.source, query, artistFilter, sort, sortDirection, sortRevision, randomSeed, showFilter, favoritesOnly, dig.moodOn, dig.mood, dig.energy, dig.familiarity, dig.acoustic, dig.vocal]);
+    const key = routeKey;
     if (key !== orderKey) { orderKey = key; tileOrder = result.map(t => t.id); }
     else {
       const known = new Set(tileOrder), matches = new Map(result.map(t => [t.id, t]));
@@ -154,7 +169,7 @@
   let pointerNearTop = $state(true), pointerObserved = $state(false), scrollRevealed = $state(false);
   let scrollRevealTimer: ReturnType<typeof setTimeout> | undefined;
   let leaveTimer: ReturnType<typeof setTimeout> | undefined;
-  const barShown = $derived(dig.open || toolbar.selecting || toolbar.mode !== 'library' || controlsFocused || !!rightView || overBrowse || scrollRevealed || (!touch && pointerObserved && pointerNearTop) || (!hidden && !player.topHidden && (touch || pointerNearTop)));
+  const barShown = $derived(cityActive || dig.open || toolbar.selecting || toolbar.mode !== 'library' || controlsFocused || !!rightView || overBrowse || scrollRevealed || (!touch && pointerObserved && pointerNearTop) || (!hidden && !player.topHidden && (touch || pointerNearTop)));
   $effect(() => { if (!barShown) toolbar.selecting = false; });
   $effect(() => { document.documentElement.style.setProperty('--topbar', `${filterHeight}px`); });
   $effect(() => { document.documentElement.style.setProperty('--browsebar', `${barShown ? filterHeight : 0}px`); });
@@ -205,11 +220,14 @@
     {:else}
     <div class="collection-filter"><LibrarySelect label="Collection type" bind:value={collectionMode} onchange={() => { showFilter = 'all'; changeMode(collectionMode as Mode); }} options={[{ value: 'albums', label: 'Albums' }, { value: 'playlists', label: 'Playlists' }]} /></div>
     <div class="show-filter"><LibrarySelect label="Show music" bind:value={showFilter} onchange={filterChanged} options={[{ value: 'all', label: 'All music' }, { value: 'favorites', label: 'Favorites' }, { value: 'mood', label: 'Tagged for Dig' }, ...genres.map(genre => ({ value: `genre:${genre}`, label: genre }))]} /></div>
+    {#if !cityActive}
     <div class="sort-filter"><LibrarySelect label="Sort library" bind:value={sort} onchange={sortChanged} options={[{ value: 'title', label: 'Album title' }, { value: 'artist', label: 'Artist name' }, { value: 'year', label: 'Release year' }, { value: 'plays', label: 'Number of plays' }, { value: 'color', label: 'Cover color' }, { value: 'random', label: 'Random order' }, { value: 'recent', label: 'Recently added' }, { value: 'library', label: 'Library order' }]} /></div>
     <button class="sort-direction icon-button" aria-label="Reverse sort order" aria-pressed={sortDirection === -1} disabled={sort === 'random'} title="Reverse sort order" onclick={() => { sortDirection *= -1; applySort(); }}><Icon name="sort" /></button>
     {/if}
+    {/if}
     </div>
-    <label class="inline-size"><Icon name="display" /><Slider type="single" min={1} max={10} step={1} value={11 - cols} onValueChange={resizeGrid} aria-label="Grid size" /></label>
+    <button class="city-toggle" aria-label="Explore albums in 3D" aria-pressed={cityActive} disabled={searching} onclick={toggleCity}>{cityActive ? 'Cover wall' : 'Chronocity'}</button>
+    {#if !cityActive}<label class="inline-size"><Icon name="display" /><Slider type="single" min={1} max={10} step={1} value={11 - cols} onValueChange={resizeGrid} aria-label="Grid size" /></label>{/if}
     <div class="bar-modes" class:expanded={toolbar.selecting}>
       <button class="icon-button" aria-label="Choose toolbar mode" aria-expanded={toolbar.selecting} aria-controls="toolbar-mode-options" title="Display options" onclick={() => (toolbar.selecting = !toolbar.selecting)}><Icon name="filter" /></button>
       <div class="mode-options" id="toolbar-mode-options" use:keyboardScope={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeModes(); } }} inert={!toolbar.selecting}>
@@ -271,10 +289,10 @@
   ondragover={(e) => e.preventDefault()} ondrop={(e) => { e.preventDefault(); const f = e.dataTransfer?.files[0]; if (f) importBackground(f); }} />
 
 <!-- the visualizer as background sits behind everything; the fullscreen one replaces it while open -->
-{#if bg.material === 'viz' && !player.visOpen}<Visualizer background />{/if}
+{#if bg.material === 'viz' && !player.visOpen && !cityActive}<Visualizer background />{/if}
 
 <!-- the material sits on the cards' layer so it scrolls and drifts with them, or on the fixed viewport behind them -->
-<div class="scroll" class:fill={!bg.tile} class:m-vinyl={!bg.scroll && bg.material === 'vinyl'} class:m-grille={!bg.scroll && bg.material === 'grille'}
+<div class="scroll" class:city-hidden={cityActive && !!City} inert={cityActive && !!City} class:fill={!bg.tile} class:m-vinyl={!bg.scroll && bg.material === 'vinyl'} class:m-grille={!bg.scroll && bg.material === 'grille'}
   class:m-fabric={!bg.scroll && bg.material === 'fabric'} class:m-custom={!bg.scroll && (bg.material === 'custom' || bg.material === 'noise')} style:--custom={bg.material === 'noise' ? `url("${noiseBackground}")` : bg.custom ? `url("${bg.custom}")` : 'none'} {onscroll} onwheel={(e) => { if (e.deltaY < 0 && scrollTop <= 4) revealAtTop(); }} bind:this={scroller} bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
   {#if searching}
     <CatalogSearch bind:kind={searchKind} top={filterHeight} cols={effectiveCols} gap={pixelGap} card={collectionCard}
@@ -292,7 +310,11 @@
   {/if}
 </div>
 
-{#if !searching && !shown.length && !library.loading && !spotify.syncing}
+{#if City}<City albums={shown} playlistMode={library.mode === 'playlists'} layoutKey={`${searchAccount}:${routeKey}`} {discoveryId} active={cityActive && !player.visOpen} paused={!!currentDetails || player.queueOpen || player.view === 'settings'} top={filterHeight} onpick={pick} onopen={(tile: Tile) => { details = tile; player.queueOpen = false; player.view = ''; }} onexit={() => { cityEnabled = false; document.querySelector<HTMLButtonElement>('.city-toggle')?.focus(); }} />{/if}
+{#if cityLoading}<div class="library-status" role="status">Opening Chronocity…</div>{/if}
+{#if cityError}<div class="library-status" role="alert">{cityError}</div>{/if}
+
+{#if !cityActive && !searching && !shown.length && !library.loading && !spotify.syncing}
   <div class="empty-library">
     {#if window.desktop && !library.tiles.length && !desktop.status?.musicFolder && !spotify.connected}
       <h2>Your music starts here.</h2>
@@ -314,13 +336,16 @@
 {#if library.scan.scanning}<div class="scan">indexing… {library.scan.count} songs</div>{/if}
 {#if spotify.syncing || spotify.indexing || library.loading}<div class="library-status" role="status">{spotify.syncing || spotify.indexing ? spotify.progress : 'Loading music…'}</div>{/if}
 {#if spotify.indexError}<div class="library-status" role="alert">Album discovery paused: {spotify.indexError} Refresh Spotify in Settings to retry.</div>{/if}
-{#if library.mode === 'playlists' && spotify.inaccessiblePlaylists > 0}<p class="playlist-note">Cards marked “Spotify only” open details with a link to Spotify. Their song lists are restricted, so Music cannot add them to your queue.</p>{/if}
+{#if !cityActive && library.mode === 'playlists' && spotify.inaccessiblePlaylists > 0}<p class="playlist-note">Cards marked “Spotify only” open details with a link to Spotify. Their song lists are restricted, so Music cannot add them to your queue.</p>{/if}
 {#if currentDetails}{#key currentDetails.id}<CollectionDetails tile={currentDetails} onclose={() => (details = null)} />{/key}{/if}
 {#if library.error || library.scan.error}<div class="library-status" role="alert">{library.error || library.scan.error}</div>{/if}
 
 {#if player.view === 'settings'}<Settings bind:art bind:motion initialTab={settingsTab} onclose={() => (player.view = '')} />{/if}
 
 <style>
+  .city-hidden { visibility: hidden; pointer-events: none; }
+  .city-toggle { flex: 0 0 auto; white-space: nowrap; min-height: 34px; padding: 5px 9px; }
+  .city-toggle[aria-pressed=true] { background: var(--ui-muted); }
   .scroll {
     --u: calc(100vw / 3312); position: fixed; inset: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #333 #000; scrollbar-gutter: stable both-edges;
     /* built-in materials: each is grain + a structure + the same two diagonal light bands */
@@ -411,6 +436,7 @@
   @media (max-width: 1100px) { .inline-size { flex-basis: 100px; } .compact-bar { gap: 5px; padding-inline: 10px; } .compact-bar :global(.library-select-field) { width: 120px; min-width: 100px; } .collection-filter :global(.library-select-field) { width: 95px; min-width: 85px; } }
   @media (max-width: 700px) {
     .compact-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 6px; padding: 8px 10px; }
+    .city-toggle { grid-column: 1 / -1; grid-row: 3; min-height: 36px; justify-self: start; }
     .browse-search { grid-column: 1; grid-row: 1; } .dig-trigger { grid-column: 2; grid-row: 1; min-height: 44px; }
     .bar-modes { grid-column: 3; grid-row: 1; } .settings-trigger { grid-column: 4; grid-row: 1; }
     .library-controls { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--ui-border) transparent; padding: 2px 0 5px; }
