@@ -10,7 +10,8 @@
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
     "audit:serve": "pnpm build && node tests/agent/server.mjs",
     "audit:regressions": "node tests/agent/run.mjs",
-    "audit:chronocity": "node tests/agent/chronocity.mjs"
+    "audit:chronocity": "node tests/agent/chronocity.mjs",
+    "audit:build-info": "node tests/agent/build-info.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",

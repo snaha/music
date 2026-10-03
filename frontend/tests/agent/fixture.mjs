@@ -31,7 +31,9 @@ export const bootstrap = () => {
         build: { version: 'audit', channel: 'audit', commit: '', branch: '', builtAt: '', runUrl: '' },
         profile: { name: 'audit', label: 'Synthetic audit', directory: '', existing: true, portable: false },
         musicFolder: '', musicFolders: [], defaultMusicFolder: '', defaultMusicFolderAvailable: false, source: 'empty', canCopy: false };
-    w.desktop = { status: async () => ({ ...desktopStatus }), onChange: () => () => {}, profiles: async () => [] };
+    let desktopCallback;
+    w.__auditDesktopStatus = changes => { Object.assign(desktopStatus, changes); desktopCallback?.({ ...desktopStatus }); };
+    w.desktop = { status: async () => ({ ...desktopStatus }), onChange: fn => { desktopCallback = fn; return () => { desktopCallback = undefined; }; }, profiles: async () => [] };
     const historyScope = crypto.randomUUID();
     const historyCall = async (method, args) => {
         const response = await fetch(`/audit-history/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...args, scope: `${args.scope}:${historyScope}` }) });

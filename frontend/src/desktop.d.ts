@@ -1,9 +1,10 @@
 type DesktopProfile = { name: string; label: string; directory: string; existing: boolean; portable: boolean };
+type BuildNotes = { title: string; summary: string; highlights: string[]; tryIt: string };
 type DesktopStatus = {
   phase: 'setup' | 'starting' | 'ready' | 'error'; error: string; onboarding: boolean;
   url: string; username: string; password: string; frame: boolean;
   share?: { webPort: number; port: number; password: string };
-  build: { version: string; channel: string; commit: string; branch: string; builtAt: string; runUrl: string };
+  build: { version: string; channel: string; commit: string; branch: string; builtAt: string; runUrl: string; notes?: BuildNotes };
   profile: DesktopProfile; musicFolder: string; musicFolders: string[];
   defaultMusicFolder: string; defaultMusicFolderAvailable: boolean; source: string; canCopy: boolean;
 };

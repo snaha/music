@@ -1,0 +1,12 @@
+{
+  "jose/3d-space": {
+    "title": "Chronocity 3D artwork explorer",
+    "summary": "Explore your album covers in a cinematic industrial world.",
+    "highlights": [
+      "Fly between original album artworks in three dimensions.",
+      "Approach a playlist to unfold its albums into an artwork gallery.",
+      "Try cinematic camera tours and optional holographic artwork."
+    ],
+    "tryIt": "Open Albums or Playlists and choose Chronocity. Select Cinematic for a camera tour; move or press Escape to take control."
+  }
+}

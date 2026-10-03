@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Button from './ui/button.svelte';
   import LibrarySelect from './ui/library-select.svelte';
+  import BuildHighlights from './BuildHighlights.svelte';
   import { desktop } from './desktop.svelte';
   let { portalTarget }: { portalTarget?: Element } = $props();
   let profiles = $state<ProfileEntry[]>([]), name = $state(''), busy = $state(''), error = $state('');
@@ -36,6 +37,7 @@
       <Button variant="ghost" disabled={!!busy} onclick={() => folder('replace')}>Replace music folders</Button>
       <Button variant="ghost" onclick={async () => { const problem = await window.desktop!.showData(); if (problem) error = problem; }}>Show data folder</Button>
     </div>
+    {#if status.build.notes}<BuildHighlights notes={status.build.notes} />{/if}
     <details>
       <summary>Preview profiles</summary>
       <p>A fresh profile starts with setup. Copying keeps your normal Music data separate. Switching profiles restarts the app.</p>

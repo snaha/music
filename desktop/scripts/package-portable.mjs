@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import { formatBuildNotes } from './build-notes.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const info = JSON.parse(await readFile(path.join(root, 'build-info.json'), 'utf8'));
@@ -29,7 +30,7 @@ const readme = `# ${info.productName} ${info.version}
 Build: ${info.commit}
 Branch: ${info.branch}
 
-## Open this portable preview
+${formatBuildNotes(info.notes)}## Open this portable preview
 
 Extract this entire folder to a writable location. ${process.platform === 'darwin' ? 'Double-click Open Music.command. Open the launcher, rather than the app inside it, to use the adjacent Data folder.' : 'Run ./Open\\ Music.sh. The launcher extracts the AppImage at runtime, so FUSE is not required.'}
 

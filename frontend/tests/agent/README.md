@@ -176,3 +176,44 @@ controls, data and resource limits, incumbent-system comparison and provenance.
 Stop temporary fixture servers and close any additional manual audit sessions;
 reset viewport overrides after browser checks. Validate the actual repository-local
 Mac app separately while preserving accounts, preferences, permissions and playback.
+
+## Preview build identity and highlights
+
+With the isolated fixture running (`pnpm --dir frontend audit:serve`):
+
+```sh
+pnpm --dir frontend audit:build-info
+```
+
+The runner uses the same browser executable/CLI configuration above and accepts
+`MUSIC_AUDIT_URL` or `MUSIC_AUDIT_PORT` for the fixture. It opens the isolated
+`music-build-info` session and injects synthetic desktop build/setup state through
+`window.__auditDesktopStatus`; it does not launch an installer or modify a real
+profile. Notes come from the authored `jose/3d-space` preview entry.
+
+At 1920×1080, 1440×900, 1024×768 and 390×844 it asserts source-branch identity,
+full Settings highlights and Try it instructions, compact Startup notes, viewport
+fit and Escape dismissal. The 1440×900 pass also checks an undescribed preview and
+a stable build omit feature claims. It saves Settings top/scrolled and Startup
+screenshots at each size, plus a stable Startup capture, under
+`.audit-results/build-info-<timestamp>/`. The runner resets its viewport and closes
+its session. Stop the fixture separately when finished.
+
+The automatic `visual: pending separate image inspection` marker is deliberate:
+passing assertions and capturing images do not approve their appearance. Inspect
+them against the incumbent `DESIGN.md` and record a separate scoped verdict.
+
+2026-10-03: `.audit-results/build-info-2026-10-03T13-58-48-091Z/` records passing
+assertions at all four sizes. A fresh Astra finish reviewer personally inspected
+all 13 screenshots and returned **ship**, with no material fixes or detector
+findings (`review.json`). This approves the inspected Startup/Settings build
+identity and highlights extension, not the whole app. The runner's pending marker
+remains distinct from this completed visual review.
+
+Two metadata tests and 18 frontend tests passed; frontend check reported zero
+errors/warnings and desktop build:frontend passed. Desktop tests passed 36 of 37;
+the inherited `history.test.js` legacy synchronous migration failure remains.
+The general regression rerun at `.audit-results/2026-10-03T13-59-11-387Z/` remains
+blocked by its stale `.tile-actions` selector. Native Mac behavior, live Spotify,
+physical touch and phone FPS were not exercised. No new final installer had been
+published at this validation checkpoint.

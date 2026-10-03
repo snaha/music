@@ -68,6 +68,27 @@ gh workflow run desktop.yml --ref jose/spotify-experiment -f channel=preview -f 
 
 Only selected platforms must succeed before publication. Stable releases still come from `v*` tags and build both platforms. Build metadata is visible in Settings and stamped into preview filenames. Rerunning publication can resume missing assets without replacing downloads already published for that commit/run.
 
+### Authored preview highlights
+
+`desktop/build-highlights.json` maps an **exact preview branch name** to `title`,
+`summary`, `highlights` and `tryIt`. The `jose/3d-space` entry describes Chronocity
+and explains how to enter it and take control of a cinematic tour. These are
+maintained feature claims, not descriptions inferred from commit subjects.
+Update the entry when features or instructions change, and update its key when
+the preview branch changes. Other preview branches and stable builds omit these
+notes; undescribed previews still identify their source branch.
+
+`prepare-build.mjs` includes the matching notes in generated build metadata and
+the Actions summary. Startup shows a compact title, summary and Try it instruction
+beside the build/source identity; Settings → Advanced shows the full feature list.
+The same authored content supplies the release title/notes and portable README.
+Keep generated `desktop/build-info.json` ignored; edit the authored JSON instead.
+
+Publication reruns verify the existing release's commit, refresh its generated
+title and body, and upload only missing assets. They do not replace previously
+published binaries or other assets. Updating release text therefore does not
+update the notes embedded in an already downloaded app or portable archive.
+
 Optionally set the repository **variable** `SPOTIFY_CLIENT_ID` to your developer app's public client ID. It is embedded in builds so allowlisted testers can connect without entering configuration. Do not supply a client secret or any user's tokens. Register `http://127.0.0.1:8888/callback` in that developer app and allowlist each tester. Without this variable, Settings → Spotify accepts a client ID. Local music requires no Spotify account.
 
 ### Music folders

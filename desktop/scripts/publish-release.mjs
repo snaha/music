@@ -2,11 +2,15 @@ import { createHash } from 'node:crypto';
 import { appendFile, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import { formatBuildNotes, readBuildNotes, releaseTitle } from './build-notes.mjs';
 
 const release = path.resolve(process.env.MUSIC_RELEASE_DIR || 'release');
 const preview = process.env.MUSIC_CHANNEL === 'preview';
 const commit = process.env.GITHUB_SHA;
+const branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || '';
+const highlights = await readBuildNotes({ channel: preview ? 'preview' : 'stable', branch });
 const tag = preview ? `preview-${commit.slice(0, 7)}-${process.env.GITHUB_RUN_NUMBER}` : process.env.GITHUB_REF_NAME;
+const title = releaseTitle({ channel: preview ? 'preview' : 'stable', branch, commit, tag, notes: highlights });
 const assets = (await readdir(release)).filter(file => /\.(zip|dmg|AppImage|deb|tar\.gz|md)$/.test(file)).sort();
 if (!assets.some(file => /\.(zip|AppImage)$/.test(file))) throw new Error('No desktop download was produced.');
 // Normalize spaces before hashing: GitHub changes them to dots when uploading,
@@ -23,10 +27,11 @@ await writeFile(path.join(release, 'SHA256SUMS.txt'), checksums.join('\n') + '\n
 assets.push('SHA256SUMS.txt');
 const notes = `## ${preview ? 'Music Preview' : 'Music'}
 
+${preview ? `Branch: **${branch || 'Unknown'}**\n` : ''}
 Commit: ${commit}
 Workflow: https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}
 
-Choose the download matching your computer:
+${formatBuildNotes(highlights)}Choose the download matching your computer:
 - **Mac Apple Silicon:** ZIP/app or DMG. Intel Macs are not included.
 - **Linux x64:** AppImage or deb, when present.
 - **Portable:** extract the complete portable folder and use its Open Music launcher. Its Data folder keeps this build’s profiles separate.
@@ -52,10 +57,11 @@ if (existing) {
   const present = new Set(existing.assets.map(asset => asset.name));
   const missing = assets.filter(file => !present.has(file));
   if (missing.length) gh(['release', 'upload', tag, ...missing.map(file => path.join(release, file))]);
+  gh(['release', 'edit', tag, '--title', title, '--notes-file', notesFile]);
   url = existing.url;
 } else {
   url = gh(['release', 'create', tag, ...assets.map(file => path.join(release, file)), '--target', commit,
-    '--title', preview ? `Music Preview · ${commit.slice(0, 7)}` : `Music ${tag}`, '--notes-file', notesFile,
+    '--title', title, '--notes-file', notesFile,
     ...(preview ? ['--prerelease', '--latest=false'] : ['--verify-tag'])]);
 }
 console.log(url);

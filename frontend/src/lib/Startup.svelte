@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Button from './ui/button.svelte';
   import Icon from './ui/icon.svelte';
+  import BuildHighlights from './BuildHighlights.svelte';
   import { desktop } from './desktop.svelte';
 
   let { onretry }: { onretry: () => void } = $props();
@@ -12,6 +13,10 @@
   let folders = $state<string[]>([]);
   let initialized = false;
   const status = $derived(desktop.status);
+  const buildLabel = $derived([
+    status?.build.channel === 'preview' && status.build.branch ? `From ${status.build.branch}` : '',
+    status?.build.commit.slice(0, 7),
+  ].filter(Boolean).join(' · '));
   const starting = $derived(status?.phase === 'starting');
   const problem = $derived(error || desktop.error || status?.error || '');
 
@@ -56,7 +61,7 @@
   <div class="startup-body">
     <header class="identity">
       <span>{status?.build.channel === 'preview' ? 'Music Preview' : 'Music'}</span>
-      {#if status?.build.commit}<span class="build">{status.build.commit.slice(0, 7)}</span>{/if}
+      {#if buildLabel}<span class="build">{buildLabel}</span>{/if}
     </header>
     {#if starting}
       <section class="starting" aria-live="polite" aria-busy="true">
@@ -83,6 +88,7 @@
       {#if status && !status.profile.existing}
         <p class="profile-note">{status.profile.portable ? 'This folder has its own library and preferences.' : 'This preview has its own library and preferences.'}</p>
       {/if}
+      {#if status?.build.notes}<div class="preview-notes"><BuildHighlights notes={status.build.notes} compact /></div>{/if}
       <section class="sources" aria-labelledby="folders-title">
         <h2 id="folders-title">Music folders</h2>
         <ul class="folders">
@@ -130,6 +136,7 @@
   p { margin: 0; max-width: 65ch; color: var(--ui-text-muted); }
   .intro { margin-top: 12px; font-size: 16px; }
   .profile-note { margin-top: 16px; font-size: 13px; }
+  .preview-notes { margin-top: 24px; }
   .sources { margin-top: 32px; }
   .folders { margin: 12px 0 16px; padding: 0; list-style: none; border-top: 1px solid var(--ui-border); }
   .source { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 20px; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--ui-border); }
