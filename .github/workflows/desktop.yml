@@ -16,7 +16,7 @@ on:
         description: Publish a preview download page
         type: boolean
         default: false
-  pull_request:
+  pull_request: # preview builds, attached to the run
     paths: ['frontend/**', 'desktop/**', '.github/workflows/desktop.yml']
   push:
     tags: ['v*']
