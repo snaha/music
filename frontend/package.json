@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
     "audit:serve": "pnpm build && node tests/agent/server.mjs",
+    "audit:test": "node --test tests/agent/*.test.mjs",
     "audit:regressions": "node tests/agent/run.mjs"
   },
   "devDependencies": {

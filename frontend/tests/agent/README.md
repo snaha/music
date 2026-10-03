@@ -20,6 +20,10 @@ the actual app, whose settings and playback are real.
 
 ## Repeatable agent-browser assertions
 
+The fixture has a small contract test for the current desktop status API and
+listener cleanup. Run it with `pnpm --dir frontend audit:test`; CI runs it alongside
+frontend checks and the desktop/frontend test suite before packaging.
+
 With `agent-browser` installed and its browser available:
 
 ```sh
@@ -33,7 +37,9 @@ must support `set viewport`, `hover`, `focus`, `eval`, `snapshot` and `screensho
 Set `MUSIC_AGENT_BROWSER` to use another CLI executable location.
 
 Runs at 1920×1080, 1440×900, 1024×768 and 390×844. Checks hover/focus and overlay
-hit testing, cover play, dropdown opening/no-match/Escape/selection/reset,
+hit testing, separate cover browsing and collection playback, listening state,
+album/playlist views, catalog result filtering and Add to queue without playback,
+dropdown opening/no-match/Escape/selection/reset,
 Settings modal centering, focus containment, category keys, device-picker search,
 keyboard selection and nested Escape, click-only menus and keyboard dismissal, track-detail
 overflow, and scroll/tile-order preservation during background updates.
@@ -60,10 +66,14 @@ Never treat a new screenshot as approved solely because the runner completed.
 
 ## Latest validation
 
-2026-09-30: the agent-browser runner passed all four viewport sizes using the
+2026-10-03: the updated agent-browser runner passed all four viewport sizes using the
 installed CLI and Chrome for Testing. Screenshots and results are saved under
-`.audit-results/2026-09-30T16-14-42-955Z/`. Automated assertions passed; full visual
-approval of every screenshot remains a separate review. This is intentionally
-recorded as pending in results.json.
+`.audit-results/2026-10-03T13-51-52-975Z/`. Desktop tests passed 35/35, frontend
+tests 11/11, and the fixture contract test 1/1; frontend checks and the desktop
+frontend build also passed. Selected Settings, player, theme and search captures
+were inspected across the four sizes. Full comparison of every screenshot with
+approved references remains pending in results.json. No references were replaced.
+The actual Mac app, live Spotify/audio capture and physical phone performance
+were not re-exercised in this test-harness-only update.
 
 Official agent-browser command reference: https://agent-browser.dev/commands

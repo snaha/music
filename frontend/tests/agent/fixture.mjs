@@ -16,7 +16,27 @@ export const bootstrap = () => {
     const status = { availability: 'ready', connected: true, account: 'Test account', clientId: '', collections, albums, indexedTracks: 480, indexing: false, indexError: '', inaccessiblePlaylists: 1, updatedAt: 0, syncing: false, progress: '', error: '', retryAt: 0, quotaBlocked: false, deviceId: 'audit', deviceName: 'Spotify Desktop', sameMac: true };
     let callback;
     let playback = null;
-    w.desktop = { url: location.origin, username: 'audit', password: 'test-only', frame: true };
+    const desktopStatus = {
+        phase: 'ready', onboarding: false, error: '', url: location.origin, username: 'audit', password: 'test-only', frame: true,
+        build: { version: 'audit', channel: 'preview', commit: '', branch: 'synthetic', builtAt: '', runUrl: '' },
+        profile: { name: 'audit', label: 'Synthetic audit', directory: '/synthetic/Data/profiles/audit', existing: false, portable: true },
+        musicFolder: '/synthetic/Music', musicFolders: ['/synthetic/Music'], defaultMusicFolder: '/synthetic/Music', defaultMusicFolderAvailable: true, source: 'local', canCopy: false,
+    };
+    const desktopListeners = new Set();
+    w.__auditDesktopCommands = [];
+    const desktopChanged = changes => { Object.assign(desktopStatus, changes); for (const listener of desktopListeners) listener(structuredClone(desktopStatus)); };
+    w.desktop = {
+        status: async () => structuredClone(desktopStatus),
+        onChange: listener => { desktopListeners.add(listener); return () => desktopListeners.delete(listener); },
+        profiles: async () => [], chooseFolder: async () => '/synthetic/Archive',
+        start: async options => { desktopChanged({ phase: 'ready', onboarding: false, musicFolders: options?.musicFolders || [], musicFolder: options?.musicFolders?.[0] || '' }); return structuredClone(desktopStatus); },
+        finishSetup: async () => { desktopChanged({ onboarding: false }); return structuredClone(desktopStatus); },
+        setFrame: async frame => { w.__auditDesktopCommands.push(['setFrame', frame]); desktopChanged({ frame }); },
+        changeFolder: async (...args) => { w.__auditDesktopCommands.push(['changeFolder', ...args]); },
+        switchProfile: async (...args) => { w.__auditDesktopCommands.push(['switchProfile', ...args]); },
+        showData: async () => { w.__auditDesktopCommands.push(['showData']); return ''; },
+        restart: async () => { w.__auditDesktopCommands.push(['restart']); }, lanIp: async () => '127.0.0.1',
+    };
     const historyScope = crypto.randomUUID();
     const historyCall = async (method, args) => {
         const response = await fetch(`/audit-history/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...args, scope: `${args.scope}:${historyScope}` }) });

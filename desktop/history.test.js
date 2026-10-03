@@ -30,7 +30,10 @@ test('frontend migrates to the worker, pages and searches history, isolates user
   const context = { id: 'context', queue: [{ id: 'local:track:1', rawId: '1', source: 'local', title: 'Song', album: 'Album', cover: 'signed-secret-artwork', available: true }], order: 'normal', permutation: [], origin: { id: 'local:playlist:p', rawId: 'p', source: 'local', kind: 'playlist', title: 'Night mix', cover: 'signed-secret-artwork' } };
   try {
     m.session.base = 'http://127.0.0.1:1234'; m.session.username = 'admin';
-    storage.set('music.history.v1:http://127.0.0.1:1234:admin', JSON.stringify({ contexts: [context], entries: [{ id: 'legacy', contextId: context.id, index: 0, cursor: 0, playedAt: 1000 }] }));
+    // Origin migration canonicalizes desktop history before the renderer loads it.
+    const legacyKey = 'music.history.v1:desktop:admin';
+    const legacy = JSON.stringify({ contexts: [context], entries: [{ id: 'legacy', contextId: context.id, index: 0, cursor: 0, playedAt: 1000 }] });
+    storage.set(legacyKey, legacy);
     m.loadHistory();
     assert.equal(m.listeningHistory.entries.length, 1, 'legacy loads synchronously');
     for (let i = 0; i < 120; i++) m.recordHistory(context, 0, 0);
@@ -38,6 +41,8 @@ test('frontend migrates to the worker, pages and searches history, isolates user
     assert.equal(m.listeningHistory.total, 121);
     assert.equal(m.listeningHistory.entries.length, 50);
     const persisted = await bridge.list({ scope: 'desktop:admin' });
+    assert.ok((await bridge.list({ scope: 'desktop:admin', query: 'night', offset: 100 })).entries.some(entry => entry.id === 'legacy'), 'legacy entry reaches the durable journal');
+    assert.equal(storage.get(legacyKey), legacy, 'migration retains the browser backup');
     assert.equal(persisted.entries[0].context.queue[0].cover, '', 'signed cover URL is not persisted');
     assert.equal(persisted.entries[0].context.origin.cover, '');
     await m.searchHistory('', true); assert.equal(m.listeningHistory.entries.length, 100);

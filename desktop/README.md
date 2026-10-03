@@ -66,7 +66,7 @@ The workflow publishes a prerelease named `preview-<commit>-<run>` containing no
 gh workflow run desktop.yml --ref jose/spotify-experiment -f channel=preview -f platforms=mac -f publish=true
 ```
 
-Only selected platforms must succeed before publication. Stable releases still come from `v*` tags and build both platforms. Build metadata is visible in Settings and stamped into preview filenames. Rerunning publication can resume missing assets without replacing downloads already published for that commit/run.
+Frontend checks, the desktop/frontend test suite, and the synthetic desktop-bridge contract test must pass before packaging. The browser regression runner remains a separate agent-driven check. Only selected platforms must succeed before publication. Stable releases still come from `v*` tags and build both platforms. Build metadata is visible in Settings and stamped into preview filenames. Rerunning publication can resume missing assets without replacing downloads already published for that commit/run.
 
 Optionally set the repository **variable** `SPOTIFY_CLIENT_ID` to your developer app's public client ID. It is embedded in builds so allowlisted testers can connect without entering configuration. Do not supply a client secret or any user's tokens. Register `http://127.0.0.1:8888/callback` in that developer app and allowlist each tester. Without this variable, Settings → Spotify accepts a client ID. Local music requires no Spotify account.
 

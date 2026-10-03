@@ -47,8 +47,23 @@ jobs:
           const publish = tagged || (process.env.BUILD_EVENT === 'workflow_dispatch' && channel === 'preview' && process.env.INPUT_PUBLISH === 'true');
           appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nmac=${platforms !== 'linux'}\nlinux=${platforms !== 'mac'}\npublish=${publish}\n`);
           JS
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.5.1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: '**/pnpm-lock.yaml' }
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pnpm install --frozen-lockfile
+        working-directory: desktop
+      - run: pnpm --dir frontend check
+      - run: pnpm --dir desktop test
+      - run: pnpm --dir frontend audit:test
   mac:
-    needs: prepare
+    needs: [prepare, checks]
     if: needs.prepare.outputs.mac == 'true'
     runs-on: macos-14 # Apple Silicon
     env:
@@ -80,7 +95,7 @@ jobs:
             desktop/release/*.zip
             desktop/release/*-README.md
   linux:
-    needs: prepare
+    needs: [prepare, checks]
     if: needs.prepare.outputs.linux == 'true'
     runs-on: ubuntu-latest
     env:
@@ -108,9 +123,9 @@ jobs:
             desktop/release/*.tar.gz
             desktop/release/*-README.md
   release:
-    needs: [prepare, mac, linux]
+    needs: [prepare, checks, mac, linux]
     if: >-
-      always() && !cancelled() && needs.prepare.outputs.publish == 'true' &&
+      always() && !cancelled() && needs.checks.result == 'success' && needs.prepare.outputs.publish == 'true' &&
       (needs.mac.result == 'success' || needs.mac.result == 'skipped') &&
       (needs.linux.result == 'success' || needs.linux.result == 'skipped')
     runs-on: ubuntu-latest
