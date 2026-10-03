@@ -4,12 +4,17 @@ import { moveTo, shuffle } from './shuffle';
 
 export const player = $state({
   queue: [] as Child[], index: -1, playing: false, time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, topHidden: false, visOpen: false, view: '' as '' | 'share' | 'settings', viewFrom: 'bottom' as 'bottom' | 'right',
+  volume: Number(localStorage.getItem('volume') ?? 1), muted: false,
   get song() { return this.queue[this.index] as Child | undefined; },
 });
 
 const audio = new Audio();
 audio.crossOrigin = 'anonymous'; // needed later for Web Audio / visualizers
 audio.preload = 'auto';
+audio.volume = player.volume;
+// the bar's volume slider and mute key; the level survives restarts, mute does not
+export function setVolume(v: number) { player.volume = audio.volume = Math.min(1, Math.max(0, v)); localStorage.setItem('volume', String(player.volume)); if (v > 0 && audio.muted) toggleMute(); }
+export function toggleMute() { player.muted = audio.muted = !audio.muted; }
 let scrobbled = false;
 
 audio.addEventListener('timeupdate', () => {
