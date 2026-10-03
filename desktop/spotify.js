@@ -1,0 +1,407 @@
+import { createHash, randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
+import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
+import path from 'node:path';
+import { deriveAlbums, discoverLibrary, migrateIndex } from './spotify-library.js';
+import { albumTile, musicTrack, playlistTile } from './spotify-model.js';
+
+const SCOPES = 'user-library-read playlist-read-private playlist-read-collaborative user-read-playback-state user-modify-playback-state';
+const readJSON = async (file, fallback) => { try { return JSON.parse(await readFile(file, 'utf8')); } catch { return fallback; } };
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const emptyCache = () => ({ account: '', collections: [], pages: {}, updatedAt: 0 });
+
+export class SpotifyError extends Error {
+  constructor(message, status = 0, retryAt = 0) { super(message); this.status = status; this.retryAt = retryAt; }
+}
+
+// Tokens and all Spotify requests stay in the main process. The renderer never supplies API URLs.
+export class SpotifyService {
+  constructor({ directory, secureStorage, openExternal, fetchImpl = fetch, notify = () => {}, callbackPort = 8888 }) {
+    this.directory = directory; this.secureStorage = secureStorage; this.openExternal = openExternal;
+    this.fetch = fetchImpl; this.notify = notify;
+    this.callbackPort = callbackPort;
+    this.config = { clientId: '', deviceId: '', deviceName: '', sameMac: false };
+    this.cache = emptyCache(); this.tokens = null; this.generation = 0; this.loginAttempt = 0;
+    this.syncing = false; this.progress = ''; this.error = ''; this.retryAt = 0; this.quotaBlocked = false;
+    this.indexing = false; this.indexError = ''; this.indexed = { albums: [], tracks: new Map(), indexedTracks: 0 }; this.transitionUntil = 0; this.albumPages = new Map();
+    this.availability = 'disconnected'; this.networkFailures = 0; this.checkingAvailability = null; this.lastPlaybackAt = 0;
+    this.refreshing = null; this.cancelLogin = null; this.writeTail = Promise.resolve();
+  }
+
+  async init() {
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    this.config = { ...this.config, ...await readJSON(path.join(this.directory, 'config.json'), {}) };
+    this.cache = await readJSON(path.join(this.directory, 'library.json'), emptyCache());
+    if (this.secureStorage.isEncryptionAvailable()) {
+      try {
+        this.tokens = JSON.parse(this.secureStorage.decryptString(await readFile(path.join(this.directory, 'tokens.bin'))));
+        if (this.cache.account !== this.tokens.account) this.cache = emptyCache();
+      } catch { this.tokens = null; }
+    }
+    this.availability = this.tokens ? 'checking' : 'disconnected';
+    this.rebuildIndex();
+    return this.snapshot();
+  }
+
+  rebuildIndex() {
+    this.indexed = deriveAlbums(this.cache);
+    const normalize = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+    const collections = new Map([...this.cache.collections, ...this.indexed.albums].map(tile => [tile.id, tile]));
+    this.searchCollections = [...collections.values()].map(tile => ({ tile, text: normalize([tile.title, tile.sub, tile.year, ...(tile.genres ?? [])].join(' ')) }));
+    const tracks = new Map();
+    for (const list of this.indexed.tracks.values()) for (const track of list) tracks.set(track.id, track);
+    this.searchTracks = [...tracks.values()].map(track => ({ track: { ...track, playbackOrigin: collections.get(track.albumId) },
+      text: normalize([track.title, track.artist, track.album, track.albumInfo?.year, ...(track.albumInfo?.genres ?? []), ...(track.origins ?? []).map(origin => origin.title)].join(' ')) }));
+    const artists = new Map();
+    for (const album of this.indexed.albums) if (album.sub) {
+      const artist = artists.get(album.sub);
+      if (artist) artist.count++;
+      else artists.set(album.sub, { id: `spotify:artist:${album.sub}`, rawId: album.sub, source: 'spotify', kind: 'artist', title: album.sub, sub: 'Artist', cover: album.cover, count: 1, available: true });
+    }
+    this.searchArtists = [...artists.values()].map(tile => ({ tile, text: normalize(tile.title) }));
+  }
+  search(query, offset = 0) {
+    if (typeof query !== 'string' || query.length > 500 || !Number.isInteger(offset) || offset < 0) throw new Error('Invalid catalog search.');
+    const words = query.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return { collections: [], artists: [], tracks: [], next: null };
+    const matches = text => words.every(word => text.includes(word));
+    const tracks = (this.searchTracks ?? []).filter(item => matches(item.text));
+    const related = new Set(tracks.flatMap(({ track }) => [track.albumId, ...(track.origins ?? []).map(origin => origin.id)]));
+    return { collections: (this.searchCollections ?? []).filter(item => matches(item.text) || related.has(item.tile.id)).map(item => item.tile),
+      artists: (this.searchArtists ?? []).filter(item => matches(item.text)).map(item => item.tile),
+      tracks: tracks.slice(offset, offset + 50).map(item => item.track), next: offset + 50 < tracks.length ? offset + 50 : null };
+  }
+  async waitForPlayback() { while (Date.now() < this.transitionUntil) await delay(100); }
+  transition(active) { this.transitionUntil = active ? Date.now() + 30000 : 0; }
+  albumTracks(id, offset = 0, snapshot) {
+    if (!Number.isInteger(offset) || offset < 0) throw new Error('Invalid album page.');
+    for (const [key, value] of this.albumPages) if (value.until < Date.now()) this.albumPages.delete(key);
+    if (offset === 0) {
+      const tracks = this.indexed.tracks.get(id);
+      if (!tracks) throw new Error('This album is no longer in your library.');
+      snapshot = randomBytes(16).toString('hex');
+      if (this.albumPages.size >= 32) this.albumPages.delete(this.albumPages.keys().next().value);
+      this.albumPages.set(snapshot, { id, tracks, until: Date.now() + 600000 });
+    }
+    const page = this.albumPages.get(snapshot);
+    if (!page || page.id !== id) throw new Error('Album selection expired. Open the album again.');
+    const next = offset + 50 < page.tracks.length ? offset + 50 : null;
+    if (next === null) this.albumPages.delete(snapshot);
+    const tile = this.indexed.albums.find(t => t.id === id);
+    return { tracks: page.tracks.slice(offset, offset + 50), next, snapshot, incomplete: !!tile?.incomplete };
+  }
+
+  snapshot() {
+    return { availability: this.availability, connected: !!this.tokens, account: this.cache.account, clientId: this.config.clientId,
+      collections: this.cache.collections, albums: this.indexed.albums, indexedTracks: this.indexed.indexedTracks, indexing: this.indexing, indexError: this.indexError,
+      inaccessiblePlaylists: this.cache.collections.filter(t => t.kind === 'playlist' && !t.available).length, updatedAt: this.cache.updatedAt, syncing: this.syncing,
+      progress: this.progress, error: this.error, retryAt: this.retryAt, quotaBlocked: this.quotaBlocked,
+      deviceId: this.config.deviceId, deviceName: this.config.deviceName, sameMac: this.config.sameMac };
+  }
+  emit() { this.notify(this.snapshot()); }
+
+  setAvailability(value) {
+    if (this.availability !== value) { this.availability = value; this.emit(); }
+  }
+  observeError(error) {
+    if (!this.tokens) return;
+    if (error.status === 401) this.setAvailability('reconnect');
+    else if (error.status === 403) this.setAvailability('restricted');
+    else if (error.status === 404) this.setAvailability('device-unavailable');
+    else if (!error.status && ++this.networkFailures >= 2) this.setAvailability('offline');
+  }
+  async request(url, options) {
+    const generation = this.generation;
+    try { const result = await this.fetch(url, options); if (generation === this.generation) this.networkFailures = 0; return result; }
+    catch (error) { if (generation === this.generation) this.observeError(error); throw error; }
+  }
+  checkAvailability(force = false) {
+    if (this.checkingAvailability) return this.checkingAvailability;
+    if (!this.tokens) { this.setAvailability('disconnected'); return Promise.resolve(this.snapshot()); }
+    if (this.quotaBlocked || Date.now() < this.retryAt || (!force && Date.now() - this.lastPlaybackAt < 30000)) return Promise.resolve(this.snapshot());
+    const generation = this.generation;
+    this.checkingAvailability = (async () => {
+      try {
+        const devices = await this.devices();
+        if (generation === this.generation) this.setAvailability(devices.some(d => d.id === this.config.deviceId && !d.is_restricted) ? 'ready' : 'device-unavailable');
+      } catch { /* Request classification retains the last confirmed state on transient failures. */ }
+      return this.snapshot();
+    })().finally(() => { this.checkingAvailability = null; });
+    return this.checkingAvailability;
+  }
+
+  // Serialize atomic writes so disconnect cannot be followed by an old token/cache write.
+  persist(name, bytes) {
+    const generation = this.generation;
+    this.writeTail = this.writeTail.catch(() => {}).then(async () => {
+      if (generation !== this.generation) return;
+      const file = path.join(this.directory, name);
+      await writeFile(`${file}.tmp`, bytes, { mode: 0o600 });
+      if (generation === this.generation) await rename(`${file}.tmp`, file);
+      else await rm(`${file}.tmp`, { force: true });
+    });
+    return this.writeTail;
+  }
+  saveConfig() { return this.persist('config.json', JSON.stringify(this.config)); }
+  saveCache() { return this.persist('library.json', JSON.stringify(this.cache)); }
+  saveTokens() {
+    if (!this.secureStorage.isEncryptionAvailable()) throw new Error('OS credential encryption is unavailable. Spotify credentials were not saved.');
+    return this.persist('tokens.bin', this.secureStorage.encryptString(JSON.stringify(this.tokens)));
+  }
+
+  async tokenRequest(body, classify = true) {
+    const generation = this.generation;
+    const r = await this.request('https://accounts.spotify.com/api/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body), signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) { const error = new SpotifyError('Spotify login expired or was rejected. Connect Spotify again.', r.status === 400 ? 401 : r.status); if (classify && generation === this.generation) this.observeError(error); throw error; }
+    return r.json();
+  }
+
+  async accessToken() {
+    if (!this.tokens) throw new SpotifyError('Connect Spotify in Settings first.', 401);
+    if (this.tokens.expiresAt > Date.now() + 60000) return this.tokens.access_token;
+    if (!this.refreshing) {
+      const generation = this.generation, refresh = this.tokens.refresh_token;
+      this.refreshing = (async () => {
+        const t = await this.tokenRequest({ grant_type: 'refresh_token', refresh_token: refresh, client_id: this.config.clientId });
+        if (generation !== this.generation) throw new Error('Spotify connection changed.');
+        this.tokens = { ...this.tokens, ...t, refresh_token: t.refresh_token ?? refresh, expiresAt: Date.now() + t.expires_in * 1000 };
+        await this.saveTokens();
+        return this.tokens.access_token;
+      })().finally(() => { this.refreshing = null; });
+    }
+    return this.refreshing;
+  }
+
+  async api(endpoint, { method = 'GET', body, retry = true } = {}) {
+    if (this.quotaBlocked) throw new SpotifyError('Spotify API quota exhausted. Retry from Settings later.', 429);
+    if (Date.now() < this.retryAt) throw new SpotifyError('Spotify is rate limiting requests. Please wait.', 429, this.retryAt);
+    const generation = this.generation;
+    const token = await this.accessToken();
+    if (generation !== this.generation) throw new Error('Spotify connection changed.');
+    const r = await this.request(`https://api.spotify.com/v1${endpoint}`, {
+      method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000),
+    });
+    if (generation !== this.generation) throw new Error('Spotify connection changed.');
+    if (r.status === 401 && retry) {
+      this.tokens.expiresAt = 0;
+      return this.api(endpoint, { method, body, retry: false });
+    }
+    if (r.status === 204) return null;
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 429) {
+      this.quotaBlocked = data.error?.reason === 'QUOTA_EXCEEDED';
+      this.retryAt = Date.now() + Math.max(1, Number(r.headers.get('retry-after')) || 30) * 1000;
+      this.error = this.quotaBlocked ? 'Spotify API quota exhausted. Retry later from Settings.' : 'Spotify is rate limiting requests. The queue is preserved.';
+      this.emit(); throw new SpotifyError(this.error, 429, this.retryAt);
+    }
+    if (!r.ok) { const error = new SpotifyError(r.status === 403 ? 'Spotify denied access. Check Premium, the app allowlist, and device permissions.' :
+      r.status === 404 ? 'Spotify device unavailable. Open Spotify Desktop and select it again in Settings.' :
+      r.status === 401 ? 'Reconnect Spotify in Settings.' : `Spotify request failed (${r.status}).`, r.status); this.observeError(error); throw error; }
+    return data;
+  }
+
+  async connect(clientId) {
+    if (!/^[a-f\d]{32}$/i.test(clientId)) throw new Error('Enter the 32-character Spotify client ID, not the client secret.');
+    if (!this.secureStorage.isEncryptionAvailable()) throw new Error('OS credential encryption is unavailable.');
+    this.cancelLogin?.();
+    const attempt = ++this.loginAttempt;
+    const verifier = randomBytes(48).toString('base64url'), state = randomBytes(24).toString('base64url');
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+    const code = await new Promise((resolve, reject) => {
+      let redirectUri = '';
+      const server = createServer((req, res) => {
+        const u = new URL(req.url, 'http://127.0.0.1');
+        if (u.pathname !== '/callback') { res.writeHead(404).end(); return; }
+        if (u.searchParams.get('state') !== state) { res.writeHead(400).end('Invalid login state.'); return; }
+        res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('Return to Music. You may close this tab.');
+        finish(u.searchParams.has('error') ? new Error('Spotify login was canceled.') : null, u.searchParams.get('code'));
+      });
+      const timer = setTimeout(() => finish(new Error('Spotify login timed out. Try connecting again.')), 600000);
+      const finish = (error, value) => {
+        clearTimeout(timer); server.close(); this.cancelLogin = null;
+        error ? reject(error) : resolve({ code: value, redirectUri });
+      };
+      server.on('error', (error) => { clearTimeout(timer); this.cancelLogin = null; reject(error.code === 'EADDRINUSE' ? new Error('Spotify login needs local port 8888. Close the application using that port and retry.') : error); });
+      this.cancelLogin = () => finish(new Error('Spotify login canceled.'));
+      server.listen(this.callbackPort, '127.0.0.1', () => {
+        redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
+        const url = new URL('https://accounts.spotify.com/authorize');
+        url.search = new URLSearchParams({ response_type: 'code', client_id: clientId, scope: SCOPES,
+          redirect_uri: redirectUri, state, code_challenge_method: 'S256', code_challenge: challenge }).toString();
+        this.openExternal(url.href).catch((error) => finish(error));
+      });
+    });
+    const token = await this.tokenRequest({ grant_type: 'authorization_code', code: code.code,
+      redirect_uri: code.redirectUri, client_id: clientId, code_verifier: verifier }, false);
+    if (attempt !== this.loginAttempt) throw new Error('Spotify login was canceled.');
+    // Verify the new account before changing the existing connection or saved library.
+    const response = await this.fetch('https://api.spotify.com/v1/me', {
+      headers: { Authorization: `Bearer ${token.access_token}` }, signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new SpotifyError('Spotify denied access. Check Premium and the app allowlist.', response.status);
+    const account = await response.json();
+    if (attempt !== this.loginAttempt) throw new Error('Spotify login was canceled.');
+    await this.disconnect();
+    if (this.cache.account !== account.id) this.cache = emptyCache();
+    this.cache.account = account.id; this.rebuildIndex();
+    this.config.clientId = clientId;
+    this.tokens = { ...token, account: account.id, expiresAt: Date.now() + token.expires_in * 1000 };
+    await this.saveTokens(); await this.saveConfig(); await this.saveCache();
+    this.availability = 'checking'; this.error = ''; this.emit();
+    void this.refreshLibrary(); void this.checkAvailability(true);
+    return this.snapshot();
+  }
+
+  async disconnect() {
+    this.cancelLogin?.(); this.loginAttempt++; this.generation++; this.tokens = null; this.refreshing = null;
+    this.albumPages.clear(); this.indexing = false; this.indexError = ''; this.syncing = false; this.progress = ''; this.error = '';
+    this.quotaBlocked = false; this.retryAt = 0; this.networkFailures = 0; this.availability = 'disconnected'; this.lastPlaybackAt = 0;
+    this.config.deviceId = ''; this.config.deviceName = ''; this.config.sameMac = false;
+    await this.writeTail.catch(() => {});
+    await rm(path.join(this.directory, 'tokens.bin'), { force: true });
+    await this.saveCache(); await this.saveConfig(); this.emit(); return this.snapshot();
+  }
+
+  async removeLibrary() {
+    await this.disconnect(); this.generation++;
+    this.cache = emptyCache(); this.rebuildIndex();
+    await rm(path.join(this.directory, 'library.json'), { force: true });
+    this.emit(); return this.snapshot();
+  }
+
+  async refreshLibrary(manual = false) {
+    if (!this.tokens || this.syncing || this.indexing) return this.snapshot();
+    if (manual) this.quotaBlocked = false;
+    this.manualIndex = manual;
+    const generation = this.generation;
+    this.syncing = true; this.error = ''; this.progress = 'Reading Spotify library…'; this.emit();
+    const next = [];
+    const merge = () => {
+      const replacements = new Map(next.map((t) => [t.id, t]));
+      const previous = this.cache.collections;
+      const previousIds = new Set(previous.map((t) => t.id));
+      this.cache.collections = [...previous.map((t) => replacements.get(t.id) ?? t), ...next.filter((t) => !previousIds.has(t.id))];
+      this.emit();
+    };
+    try {
+      for (const kind of ['albums', 'playlists']) {
+        for (let offset = 0; ; offset += 50) {
+          const page = await this.api(`/me/${kind}?limit=50&offset=${offset}`);
+          if (generation !== this.generation) return this.snapshot();
+          for (const value of page.items ?? []) {
+            if (kind === 'albums' && value.album) next.push(albumTile(value.album, value.added_at));
+            if (kind === 'playlists' && value) next.push(playlistTile(value, this.cache.account));
+          }
+          this.progress = `Reading Spotify ${kind}… ${offset + (page.items?.length ?? 0)}`; merge();
+          if (!page.next) break;
+          await delay(100); // yield between pages; player commands do not wait on the library scan
+        }
+      }
+      const liked = await this.api('/me/tracks?limit=1');
+      if (generation !== this.generation) return this.snapshot();
+      next.push({ id: 'spotify:liked', rawId: 'liked', source: 'spotify', kind: 'playlist', title: 'Liked Songs',
+        sub: 'Spotify · Liked Songs', cover: liked.items?.[0]?.track?.album?.images?.[0]?.url ?? '',
+        count: liked.total ?? 0, available: true, externalUrl: 'https://open.spotify.com/collection/tracks' });
+      const nextMap = new Map(next.map((t) => [t.id, t]));
+      const oldIds = new Set(this.cache.collections.map((t) => t.id));
+      this.cache.collections = [...this.cache.collections.filter((t) => nextMap.has(t.id)).map((t) => nextMap.get(t.id)), ...next.filter((t) => !oldIds.has(t.id))];
+      this.cache.pages = {}; this.cache.updatedAt = Date.now();
+      const index = migrateIndex(this.cache);
+      for (const id of Object.keys(index.sources)) if (!nextMap.has(id)) delete index.sources[id];
+      for (const id of Object.keys(index.pending)) if (!nextMap.has(id)) delete index.pending[id];
+      this.rebuildIndex();
+      await this.saveCache();
+    } catch (error) { if (generation === this.generation) this.error = error.message; }
+    finally { if (generation === this.generation) { this.syncing = false; this.progress = ''; this.emit(); } }
+    if (generation === this.generation && !this.error) {
+      this.discovery = discoverLibrary(this);
+      void this.discovery.catch(error => { this.indexError = error.message; this.emit(); });
+    }
+    return this.snapshot();
+  }
+
+  async tracks(id, offset = 0) {
+    const tile = this.cache.collections.find((t) => t.id === id);
+    if (!tile || !tile.available) throw new Error('Spotify does not expose the contents of this collection.');
+    if (!Number.isInteger(offset) || offset < 0) throw new Error('Invalid page.');
+    const key = `${id}:${offset}`;
+    const indexed = this.cache.index?.sources[id];
+    if (indexed) return { tracks: indexed.tracks.slice(offset, offset + 50), next: offset + 50 < indexed.tracks.length ? offset + 50 : null };
+    if (this.cache.pages[key]) {
+      const page = this.cache.pages[key];
+      if (this.availability !== 'ready' && page.next !== null && !this.cache.pages[`${id}:${page.next}`]) return { ...page, next: null, incomplete: true };
+      return page;
+    }
+    if (this.availability !== 'ready') {
+      const pending = this.cache.index?.pending[id];
+      const tracks = pending?.tracks ?? [];
+      return { tracks: tracks.slice(offset, offset + 50), next: offset + 50 < tracks.length ? offset + 50 : null, incomplete: true };
+    }
+    const generation = this.generation;
+    const endpoint = id === 'spotify:liked' ? '/me/tracks' : tile.kind === 'album' ? `/albums/${encodeURIComponent(tile.rawId)}/tracks` : `/playlists/${encodeURIComponent(tile.rawId)}/items`;
+    const data = await this.api(`${endpoint}?limit=50&offset=${offset}`);
+    if (generation !== this.generation) throw new Error('Spotify connection changed.');
+    const album = { id: tile.rawId, name: tile.title, images: [{ url: tile.cover }] };
+    const tracks = (data.items ?? []).map((x) => musicTrack(x?.item ?? x?.track ?? x, tile.kind === 'album' ? album : undefined)).filter(Boolean);
+    const page = { tracks, next: data.next ? offset + 50 : null };
+    this.cache.pages[key] = page; await this.saveCache(); return page;
+  }
+
+  async devices() { return (await this.api('/me/player/devices'))?.devices ?? []; }
+  async selectDevice(id, sameMac) {
+    const device = (await this.devices()).find((d) => d.id === id);
+    if (!device || device.is_restricted) throw new Error('Choose an available Spotify device.');
+    if (sameMac && device.type?.toLowerCase() !== 'computer') throw new Error('Mixed playback needs Spotify Desktop on this Mac.');
+    Object.assign(this.config, { deviceId: id, deviceName: device.name, sameMac: !!sameMac });
+    await this.saveConfig(); this.setAvailability('ready'); this.emit(); return this.snapshot();
+  }
+  async playback() {
+    const state = await this.api('/me/player');
+    if (process.env.MUSIC_PLAYBACK_TRACE === '1') console.info('spotify-playback', JSON.stringify({ at: Date.now(), playing: state?.is_playing, progress: state?.progress_ms, duration: state?.item?.duration_ms, type: state?.currently_playing_type }));
+    this.lastPlaybackAt = Date.now();
+    this.setAvailability(state?.device?.id === this.config.deviceId ? 'ready' : 'device-unavailable');
+    if (!state) return null;
+    return { deviceId: state.device?.id, playing: !!state.is_playing, progress: (state.progress_ms ?? 0) / 1000,
+      track: musicTrack(state.item), type: state.currently_playing_type, shuffle: state.shuffle_state,
+      repeat: state.repeat_state, disallows: state.actions?.disallows ?? {}, volume: state.device?.volume_percent,
+      supportsVolume: state.device?.supports_volume === true };
+  }
+  async command(action, value) {
+    if (!this.config.deviceId) throw new Error('Select Spotify Desktop in Settings first.');
+    const q = `device_id=${encodeURIComponent(this.config.deviceId)}`;
+    if (action === 'volume' && Number.isFinite(value) && value >= 0 && value <= 100) {
+      const state = await this.api('/me/player');
+      if (state?.device?.id !== this.config.deviceId || !state.device.supports_volume) throw new Error('Change the volume in Spotify or on the selected speaker.');
+      return this.api(`/me/player/volume?volume_percent=${Math.round(value)}&${q}`, { method: 'PUT' });
+    }
+    if (action === 'play') {
+      if (!/^spotify:track:[A-Za-z0-9]+$/.test(value)) throw new Error('Only Spotify music tracks can be played.');
+      const before = await this.api('/me/player');
+      if (before?.device?.id !== this.config.deviceId) {
+        await this.api('/me/player', { method: 'PUT', body: { device_ids: [this.config.deviceId], play: false } });
+        let activated = false;
+        for (let i = 0; i < 6; i++) {
+          const state = await this.api('/me/player');
+          if (state?.device?.id === this.config.deviceId) { activated = true; break; }
+          await delay(300);
+        }
+        if (!activated) throw new Error('Spotify did not activate the selected output. Play a track once in Spotify Desktop, then retry here.');
+      }
+      await this.api(`/me/player/shuffle?state=false&${q}`, { method: 'PUT' });
+      await this.api(`/me/player/repeat?state=off&${q}`, { method: 'PUT' });
+      return this.api(`/me/player/play?${q}`, { method: 'PUT', body: { uris: [value], position_ms: 0 } });
+    }
+    if (action === 'pause' || action === 'resume') return this.api(`/me/player/${action === 'resume' ? 'play' : 'pause'}?${q}`, { method: 'PUT' });
+    if (action === 'seek' && Number.isFinite(value) && value >= 0) return this.api(`/me/player/seek?position_ms=${Math.round(value * 1000)}&${q}`, { method: 'PUT' });
+    throw new Error('Unsupported Spotify command.');
+  }
+  async external(url) {
+    const u = new URL(url);
+    if (u.origin !== 'https://open.spotify.com') throw new Error('Invalid Spotify link.');
+    await this.openExternal(u.href);
+  }
+}

@@ -1,61 +1,128 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { restore, session } from './lib/api.svelte';
-  import { library, MODES, pick, setMode, watchScan } from './lib/library.svelte';
+  import { library, MODES, pick, setMode, watchScan, updateSpotifyCollections } from './lib/library.svelte';
   import { next, player, prev, toggle } from './lib/player.svelte';
   import Bar from './lib/Bar.svelte';
   import Login from './lib/Login.svelte';
+  import { toolbar } from './lib/ui-style.svelte';
   import Grid from './lib/Grid.svelte';
   import Visualizer from './lib/Visualizer.svelte';
+  import { initSpotify, spotify } from './lib/spotify.svelte';
+  import Startup from './lib/Startup.svelte';
+  import { desktop, initDesktop } from './lib/desktop.svelte';
 
-  let ready = $state(false), idle = $state(false), hint = $state(false);
+  let ready = $state(false), idle = $state(false);
   let idleTimer: ReturnType<typeof setTimeout>;
 
-  onMount(() => { restore().finally(() => (ready = true)); watchScan(); });
-  $effect(() => { if (session.api) setMode('albums'); });
+  onMount(() => { if (!window.desktop) restore().finally(() => (ready = true)); return watchScan(); });
+  onMount(initDesktop);
+  onMount(initSpotify);
+  onMount(() => { wake(); return () => clearTimeout(idleTimer); });
+  $effect(() => { if (session.api) untrack(() => setMode('albums')); });
+  $effect(() => { spotify.collections; spotify.albums; spotify.connected; untrack(updateSpotifyCollections); });
+  let attempted = false;
+  function connectDesktop() {
+    attempted = true; desktop.error = '';
+    void restore().then(() => { ready = true; }).catch(error => { desktop.error = error.message; });
+  }
+  $effect(() => {
+    if (desktop.status?.phase === 'ready' && !desktop.status.onboarding && !attempted) untrack(connectDesktop);
+  });
 
   // any pointer activity (mouse move, tap, touch scroll) shows the bars; they fade again after a pause
   function wake() { idle = false; player.topHidden = false; clearTimeout(idleTimer); idleTimer = setTimeout(() => (idle = true), 2500); }
 
-  function onkeydown(e: KeyboardEvent) {
-    if ((e.target as HTMLElement).tagName === 'INPUT' || player.visOpen) return; // the visualizer owns the keys while open
-    const n = Number(e.key);
-    if (n >= 1 && n <= MODES.length) setMode(MODES[n - 1]);
-    else if (e.key === ' ') { e.preventDefault(); toggle(); }
-    else if (e.key === 'ArrowRight') next();
-    else if (e.key === 'ArrowLeft') prev();
-    else if (e.key === 'Escape') { if (player.view) player.view = ''; else if (player.queueOpen) player.queueOpen = false; else setMode(library.mode); }
-    else if (e.key === '?') hint = !hint;
-    else return;
-    wake();
+  function focusHelp(node: HTMLButtonElement) {
+    const active = document.activeElement as HTMLElement | null;
+    const previous = active?.closest('[aria-label="Playback options"]') ? document.querySelector<HTMLButtonElement>('button[aria-label="Playback options"]') : active;
+    node.focus({ preventScroll: true });
+    return { destroy() { if (previous?.isConnected && (document.activeElement === document.body || node.closest('.hint')?.contains(document.activeElement))) previous.focus({ preventScroll: true }); } };
   }
+  let searchReturn: HTMLElement | null = null;
+  async function focusSearch() {
+    searchReturn = document.activeElement as HTMLElement;
+    player.view = ''; player.queueOpen = false; player.shortcutsOpen = false; wake();
+    toolbar.mode = 'library'; toolbar.selecting = false;
+    await tick();
+    const input = document.querySelector<HTMLInputElement>('[aria-label="Search library"]');
+    input?.focus({ preventScroll: true }); input?.select();
+  }
+  function onkeydown(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.isComposing || !session.api || player.visOpen) return;
+    const target = e.target as HTMLElement;
+    const editing = !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="combobox"]');
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') { e.preventDefault(); void focusSearch(); return; }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'Escape') {
+      if (player.shortcutsOpen) player.shortcutsOpen = false;
+      else if (player.view) player.view = '';
+      else if (player.queueOpen) { player.queueOpen = false; player.topHidden = true; }
+      else if (target.matches('[aria-label="Search library"]')) { target.blur(); if (searchReturn?.isConnected) searchReturn.focus({ preventScroll: true }); }
+      else return;
+      e.preventDefault(); return;
+    }
+    if (editing) return;
+    if (e.key === '/') { e.preventDefault(); void focusSearch(); return; }
+    if (target.closest('[role="menu"], [role="radiogroup"], [role="tablist"]')) return;
+    if (target.closest('[role="slider"]') && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' ', ...MODES.map((_, i) => String(i + 1))].includes(e.key)) return;
+    if (e.repeat) return;
+    if (e.key === 'ArrowRight') next();
+    else if (e.key === 'ArrowLeft') prev();
+    else if (e.key.toLowerCase() === 'q') { player.queueOpen = !player.queueOpen; }
+    else if (e.key.toLowerCase() === 's') { player.viewFrom = 'right'; player.view = player.view === 'settings' ? '' : 'settings'; }
+    else if (e.key === '?') player.shortcutsOpen = !player.shortcutsOpen;
+    else if (e.key === ' ' && !target.closest('button, summary, a')) toggle();
+    else {
+      const n = Number(e.key);
+      if (n >= 1 && n <= MODES.length && !target.closest('button, summary, a')) setMode(MODES[n - 1]);
+      else return;
+    }
+    e.preventDefault(); wake();
+  }
+
 </script>
 
 <svelte:window onkeydown={onkeydown} onpointermove={wake} onpointerdown={wake} />
 
-{#if !ready}
+{#if window.desktop && (!ready || desktop.status?.phase !== 'ready' || desktop.status?.onboarding)}
+  <Startup onretry={connectDesktop} />
+{:else if !ready}
   <!-- black until we know whether a session exists -->
 {:else if !session.api}
   <Login />
 {:else}
   <Grid tiles={library.tiles} onpick={pick} activeId={player.song?.albumId} hidden={idle} />
-  <div class="hint" class:hidden={!hint}>
-    {#each MODES as m, i}<span><b>{i + 1}</b> {m}</span>{/each}
-    <span><b>space</b> play</span><span><b>← →</b> track</span><span><b>?</b> help</span>
-  </div>
+  {#if player.shortcutsOpen}
+    <aside class="hint" aria-label="Keyboard shortcuts">
+      <div class="hint-title"><strong>Keyboard shortcuts</strong><button use:focusHelp onclick={() => (player.shortcutsOpen = false)} aria-label="Close keyboard shortcuts">×</button></div>
+      <dl>
+        <div><dt><kbd>Space</kbd></dt><dd>Play / pause</dd></div>
+        <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous / next track</dd></div>
+        <div><dt><kbd>/</kbd> <kbd>⌘ / Ctrl K</kbd></dt><dd>Search library</dd></div>
+        <div><dt><kbd>Q</kbd></dt><dd>Open / close player</dd></div>
+        <div><dt><kbd>S</kbd></dt><dd>Settings</dd></div>
+        <div><dt><kbd>Esc</kbd></dt><dd>Close the active view or menu</dd></div>
+        <div><dt><kbd>↑</kbd> <kbd>↓</kbd> in queue</dt><dd>Navigate queued tracks</dd></div>
+        <div><dt><kbd>Tab</kbd></dt><dd>Navigate controls</dd></div>
+        <div><dt><kbd>←</kbd> <kbd>→</kbd> on seek</dt><dd>Seek 10 seconds</dd></div>
+        {#each MODES as m, i}<div><dt><kbd>{i + 1}</kbd></dt><dd>{m}</dd></div>{/each}
+        <div><dt><kbd>?</kbd></dt><dd>Show this help</dd></div>
+      </dl>
+      <p>While typing, keys enter text. Space activates focused buttons.</p>
+    </aside>
+  {/if}
   <Bar hidden={idle} />
   {#if player.visOpen}<Visualizer />{/if}
 {/if}
 
 <style>
-  .hint {
-    --s: clamp(0.85px, 100vw / 1600, 1.3px);
-    position: fixed; left: 50%; bottom: calc(130 * var(--s)); transform: translateX(-50%);
-    display: flex; justify-content: center; gap: calc(12 * var(--s)) calc(28 * var(--s)); flex-wrap: wrap; max-width: 90vw;
-    padding: calc(16 * var(--s)) calc(24 * var(--s)); border-radius: 4px; background: rgba(0, 0, 0, 0.7);
-    color: #fff; font-size: calc(18 * var(--s)); letter-spacing: .12em; text-transform: uppercase;
-    opacity: .95; transition: opacity 600ms; pointer-events: none;
-  }
-  .hint b { font-weight: 600; margin-right: 6px; }
-  .hidden { opacity: 0; }
+  .hint { position: fixed; right: 20px; bottom: calc(var(--botbar, 76px) + 16px); z-index: 8; box-sizing: border-box; width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - var(--botbar, 76px) - 32px); overflow-y: auto; padding: 20px; border-radius: var(--ui-radius); background: var(--ui-surface); color: var(--ui-text); font: 14px/1.5 var(--ui-font); box-shadow: 0 12px 32px #0005; }
+  .hint-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .hint button { background: transparent; border: 0; color: inherit; font: inherit; width: 44px; height: 44px; cursor: pointer; }
+  .hint button:focus-visible { outline: 2px solid var(--ui-accent); }
+  dl { margin: 8px 0 16px; }
+  dl > div { display: grid; grid-template-columns: 45% 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--ui-border); }
+  dd { margin: 0; } dt, p { color: var(--ui-text-muted); } p { margin: 0; font-size: 12px; }
+  kbd { font: inherit; color: var(--ui-text); }
 </style>

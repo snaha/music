@@ -2,3 +2,10 @@ node_modules
 bin
 dist
 release
+preload.bundle.cjs
+
+native/build/
+.local-app/
+build-info.json
+builder-config.json
+.portable-build/

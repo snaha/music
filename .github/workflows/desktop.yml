@@ -1,16 +1,57 @@
 name: desktop
 on:
   workflow_dispatch:
-  pull_request:   # preview builds, published as a pr-<number> pre-release linked from the PR
+    inputs:
+      channel:
+        description: Build channel (stable publishes only from a version tag)
+        type: choice
+        options: [preview, stable]
+        default: preview
+      platforms:
+        description: Computers to build for
+        type: choice
+        options: [mac, linux, both]
+        default: mac
+      publish:
+        description: Publish a preview download page
+        type: boolean
+        default: false
+  pull_request: # preview builds, published as a pr-<number> pre-release
     types: [opened, synchronize, reopened, closed]
+    paths: ['frontend/**', 'desktop/**', '.github/workflows/desktop.yml']
   push:
     tags: ['v*']
 permissions:
-  contents: write   # publish the release
+  contents: read
 jobs:
-  mac:
+  prepare:
     if: github.event.action != 'closed'
-    runs-on: macos-14   # Apple Silicon
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.options.outputs.channel }}
+      mac: ${{ steps.options.outputs.mac }}
+      linux: ${{ steps.options.outputs.linux }}
+      publish: ${{ steps.options.outputs.publish }}
+    steps:
+      - id: options
+        env:
+          BUILD_EVENT: ${{ github.event_name }}
+          BUILD_REF: ${{ github.ref }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_PLATFORMS: ${{ inputs.platforms }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs';
+          const tagged = process.env.BUILD_EVENT === 'push' && process.env.BUILD_REF.startsWith('refs/tags/v');
+          const channel = tagged ? 'stable' : process.env.INPUT_CHANNEL || 'preview';
+          const platforms = tagged ? 'both' : process.env.INPUT_PLATFORMS || 'both';
+          const publish = tagged || (process.env.BUILD_EVENT === 'workflow_dispatch' && channel === 'preview' && process.env.INPUT_PUBLISH === 'true');
+          appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nmac=${platforms !== 'linux'}\nlinux=${platforms !== 'mac'}\npublish=${publish}\n`);
+          JS
+  checks:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -21,28 +62,48 @@ jobs:
         working-directory: frontend
       - run: pnpm install --frozen-lockfile
         working-directory: desktop
-      # a PR build is its own app ("Music pr-12", own app id and data folder) so it installs next to the real one
-      - if: github.event_name == 'pull_request'
-        run: jq --arg n "pr-${{ github.event.number }}" '.name += "-" + $n | .productName += " " + $n | .build.appId += "." + $n' package.json > p.json && mv p.json package.json
+      - run: pnpm --dir frontend check
+      - run: pnpm --dir desktop test
+      - run: pnpm --dir frontend audit:test
+  mac:
+    needs: [prepare, checks]
+    if: needs.prepare.outputs.mac == 'true'
+    runs-on: macos-14 # Apple Silicon
+    env:
+      MUSIC_CHANNEL: ${{ needs.prepare.outputs.channel }}
+      SPOTIFY_CLIENT_ID: ${{ vars.SPOTIFY_CLIENT_ID }}
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.5.1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: '**/pnpm-lock.yaml' }
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pnpm install --frozen-lockfile
         working-directory: desktop
-      - run: pnpm navidrome && pnpm build:frontend
+      - run: pnpm dist:mac
         working-directory: desktop
-      # unsigned build: assemble the app, ad-hoc sign it (required on Apple Silicon), then package dmg + zip
-      - run: |
-          pnpm pack:mac:dir
-          codesign --force --deep --sign - release/mac-arm64/*.app
-          pnpm pack:mac
-        working-directory: desktop
-        env: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
       - uses: actions/upload-artifact@v4
         with:
-          name: Music-mac-arm64
+          name: Music-mac-arm64-${{ github.sha }}
+          if-no-files-found: error
           path: |
             desktop/release/*.dmg
             desktop/release/*.zip
+            desktop/release/*-README.md
   linux:
-    if: github.event.action != 'closed'
+    needs: [prepare, checks]
+    if: needs.prepare.outputs.linux == 'true'
     runs-on: ubuntu-latest
+    env:
+      MUSIC_CHANNEL: ${{ needs.prepare.outputs.channel }}
+      SPOTIFY_CLIENT_ID: ${{ vars.SPOTIFY_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -53,32 +114,45 @@ jobs:
         working-directory: frontend
       - run: pnpm install --frozen-lockfile
         working-directory: desktop
-      # a PR build is its own app ("Music pr-12", own app id and data folder) so it installs next to the real one
-      - if: github.event_name == 'pull_request'
-        run: jq --arg n "pr-${{ github.event.number }}" '.name += "-" + $n | .productName += " " + $n | .build.appId += "." + $n' package.json > p.json && mv p.json package.json
-        working-directory: desktop
-      - run: pnpm dist   # navidrome + frontend + AppImage and deb
+      - run: pnpm dist
         working-directory: desktop
       - uses: actions/upload-artifact@v4
         with:
-          name: Music-linux-x64
+          name: Music-linux-x64-${{ github.sha }}
+          if-no-files-found: error
           path: |
             desktop/release/*.AppImage
             desktop/release/*.deb
-  # a tag push (v0.1.0 …) also publishes a GitHub release with every build attached and notes from the commits
+            desktop/release/*.tar.gz
+            desktop/release/*-README.md
   release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [mac, linux]
+    needs: [prepare, checks, mac, linux]
+    if: >-
+      always() && !cancelled() && needs.checks.result == 'success' && needs.prepare.outputs.publish == 'true' &&
+      (needs.mac.result == 'success' || needs.mac.result == 'skipped') &&
+      (needs.linux.result == 'success' || needs.linux.result == 'skipped')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: desktop-release-${{ github.sha }}-${{ github.run_number }}
+      cancel-in-progress: false
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
       - uses: actions/download-artifact@v4
-        with: { path: release, merge-multiple: true }
-      - run: gh release create "$GITHUB_REF_NAME" release/* --generate-notes
-        env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+        with: { path: release, pattern: 'Music-*', merge-multiple: true }
+      - run: node desktop/scripts/publish-release.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MUSIC_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          MUSIC_NOTARIZED: ${{ secrets.CSC_LINK != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
   # a PR build replaces the PR's pr-<number> pre-release and keeps one comment on the PR pointing at it
   preview:
     if: github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository   # fork PRs get a read-only token
-    needs: [mac, linux]
+    needs: [checks, mac, linux]
     runs-on: ubuntu-latest
     permissions: { contents: write, pull-requests: write }
     concurrency: preview-${{ github.event.number }}
@@ -93,10 +167,10 @@ jobs:
       - run: |
           gh release delete "pr-$PR" --cleanup-tag --yes || true
           gh release create "pr-$PR" release/* --prerelease --latest=false --target "$SHA" --title "Preview of PR #$PR" \
-            --notes "Built from ${SHA::7}. Installs as **Music pr-$PR** next to the regular app, with its own library. Builds are unsigned: on a Mac, right-click the app and choose Open the first time."
+            --notes "Built from ${SHA::7}. Installs as **Music Preview** next to the regular app, using the separate preview profile. Fresh and portable profiles let testers compare versions independently. Builds are unsigned: on a Mac, right-click the app and choose Open the first time."
           {
             echo "### Preview build for ${SHA::7}"
-            echo "Installs as **Music pr-$PR** next to the regular app. All files: $(gh release view "pr-$PR" --json url -q .url)"
+            echo "Installs as **Music Preview** next to the regular app. Use Fresh or a portable folder for independent state. All files: $(gh release view "pr-$PR" --json url -q .url)"
             echo
             gh release view "pr-$PR" --json assets -q '.assets[] | "- [\(.name)](\(.url))"'
           } > comment.md
@@ -105,6 +179,7 @@ jobs:
   preview-cleanup:
     if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    permissions: { contents: write }
     steps:
       - run: gh release delete "pr-${{ github.event.number }}" --cleanup-tag --yes || true
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
