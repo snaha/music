@@ -112,7 +112,7 @@
   .bar { display: flex; align-items: center; gap: 8px; padding: 8px; padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); background: var(--bg); box-sizing: border-box; }
   .bar > * { flex: 1 0 0; min-width: 0; }
   /* left third */
-  .now { all: unset; display: flex; align-items: center; gap: 8px; min-width: 0; border-radius: 2px; }
+  .now { all: unset; flex: 1 0 0; display: flex; align-items: center; gap: 8px; min-width: 0; border-radius: 2px; } /* all: unset would drop the third */
   button.now { cursor: pointer; }
   button.now:hover .meta { opacity: .85; }
   .now img { width: 40px; height: 40px; border-radius: 2px; object-fit: cover; flex-shrink: 0; }
@@ -124,7 +124,7 @@
   /* right third */
   .side { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
   /* shadcn icon buttons: ghost (transparent, muted on hover) and primary; the 16px icons are the design's SVGs as masks */
-  .bar button { all: unset; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; box-sizing: border-box; flex: none; }
+  .bar button.ghost, .bar button.primary { all: unset; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; box-sizing: border-box; flex: none; }
   .bar button.lg { width: 36px; height: 36px; }
   .bar button.ghost:hover, .bar button.ghost.down, .bar button.ghost.on { background: var(--muted); }
   .bar button.primary { background: var(--primary); }
@@ -142,17 +142,19 @@
   .slider:disabled { cursor: default; }
   .slider:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 9999px; }
   .volume { width: 128px; flex: none; }
-  /* the time: at rest a 4px strip, the elapsed part in the foreground colour; hovered or focused, the full row */
-  .time { display: flex; align-items: center; gap: 8px; padding: 0 8px; height: 4px; background: var(--bg); overflow: hidden; box-sizing: border-box; transition: height 150ms, padding 150ms; }
+  /* the time: at rest a 4px strip, the elapsed part in the foreground colour; the full row while the strip itself is
+     hovered (its hit area reaches 8px above it) or the seek slider is focused */
+  .time { position: relative; display: flex; align-items: center; gap: 8px; padding: 0 8px; height: 4px; background: var(--bg); overflow: hidden; box-sizing: border-box; transition: height 150ms, padding 150ms; }
+  .time::before { content: ''; position: absolute; left: 0; right: 0; top: -8px; height: 8px; }
   .time .t { font-variant-numeric: tabular-nums; white-space: nowrap; opacity: 0; transition: opacity 150ms; }
   .time .seek { flex: 1; min-width: 0; padding: 0; height: 4px; }
   .time .seek::-webkit-slider-runnable-track { background: linear-gradient(to right, var(--fg) var(--p, 0%), var(--bg) var(--p, 0%)); }
   .time .seek::-webkit-slider-thumb { opacity: 0; }
-  .dock:hover .time, .dock:focus-within .time { height: 36px; padding: 8px; }
-  .dock:hover .time .t, .dock:focus-within .time .t { opacity: 1; }
-  .dock:hover .time .seek, .dock:focus-within .time .seek { padding: 4px 0; height: 12px; }
-  .dock:hover .time .seek::-webkit-slider-runnable-track, .dock:focus-within .time .seek::-webkit-slider-runnable-track { background: linear-gradient(to right, var(--primary) var(--p, 0%), var(--muted) var(--p, 0%)); }
-  .dock:hover .time .seek::-webkit-slider-thumb, .dock:focus-within .time .seek::-webkit-slider-thumb { opacity: 1; }
+  .time:hover, .time:focus-within { height: 36px; padding: 8px; }
+  .time:hover .t, .time:focus-within .t { opacity: 1; }
+  .time:hover .seek, .time:focus-within .seek { padding: 4px 0; height: 12px; }
+  .time:hover .seek::-webkit-slider-runnable-track, .time:focus-within .seek::-webkit-slider-runnable-track { background: linear-gradient(to right, var(--primary) var(--p, 0%), var(--muted) var(--p, 0%)); }
+  .time:hover .seek::-webkit-slider-thumb, .time:focus-within .seek::-webkit-slider-thumb { opacity: 1; }
   @media (prefers-reduced-motion: reduce) { .dock, .time, .time .t { transition: none; } }
   /* the menu: same width, tone and type as the top-right panel, as tall as its items, sitting on the bar's right end */
   .menu-panel {
