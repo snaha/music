@@ -216,12 +216,12 @@
       inset -1px -1px 0 rgba(0, 0, 0, 0.2);
     transition: opacity 200ms; }
   /* Figma Frame 43: hover is a 2px light border with a soft white glow; playing is an 8px white border.
-     Both are drawn inside the tile with an outline so nothing shifts */
+     Both are strokes outside the tile, as in the design: an outline grows into the gap, the cover stays whole and nothing shifts */
   .tile:hover, .tile:focus-visible { z-index: 1;
-    outline: 2px solid #fafafa; outline-offset: -2px;
+    outline: 2px solid #fafafa; outline-offset: 0;
     box-shadow: 0 0 16px 4px rgba(255, 255, 255, 0.5); }
   .tile:hover i { opacity: .7; }
-  .tile.active { outline: 8px solid #fafafa; outline-offset: -8px; box-shadow: none; }
+  .tile.active { z-index: 1; outline: 8px solid #fafafa; outline-offset: 0; box-shadow: none; }
   /* the names: bold title and regular artist over a gradient rising from the bottom edge */
   .names { position: absolute; left: 0; right: 0; bottom: 0; top: 50%; padding: 8px; box-sizing: border-box;
     display: flex; flex-direction: column; justify-content: flex-end; text-align: left; overflow-wrap: anywhere;
