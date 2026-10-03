@@ -5,6 +5,8 @@
 
   let { art = $bindable(), motion = $bindable(), onclose }: { art: boolean; motion: boolean; onclose: () => void } = $props();
   let paste = $state(''), bad = $state(false);
+  const SCALES = [['default', 'default'], [1, '1'], [1.5, '1.5'], [2, '2']] as const;
+  let scale = $state<'default' | 1 | 1.5 | 2>(window.desktop?.scale ?? 'default');
   // a picked file, or SVG / CSS pasted from a generator (fffuel's "copy SVG" or eeencode output)
   async function load(src: File | string) { bad = !(await importBackground(src)); if (!bad) paste = ''; }
 </script>
@@ -18,6 +20,13 @@
       {#if window.desktop}
         <!-- the window reopens with or without the frame, which restarts playback -->
         <label><input type="checkbox" checked={window.desktop.frame} onchange={(e) => window.desktop!.setFrame(e.currentTarget.checked)} /> native window frame</label>
+        <!-- UI scale: the OS's own, or a fixed factor; applied at once as a zoom relative to the display -->
+        <div class="row" role="radiogroup" aria-label="Scale">
+          <span class="k">scale</span>
+          {#each SCALES as [key, label] (key)}
+            <button class="btn" class:on={scale === key} role="radio" aria-checked={scale === key} onclick={() => { scale = key; window.desktop!.setScale(key); }}>{label}</button>
+          {/each}
+        </div>
       {/if}
       <label><input type="checkbox" bind:checked={bg.scroll} /> background scrolls with the cards</label>
       <label><input type="checkbox" bind:checked={bg.tile} disabled={bg.material !== 'custom'} /> tile the custom background</label>
@@ -47,9 +56,10 @@
   /* same round toggle as the top bar's */
   input { appearance: none; margin: 0; width: calc(24 * var(--s)); height: calc(24 * var(--s)); border: 2px solid #fff9; border-radius: 50%; cursor: pointer; }
   input:checked { background: #fff; }
-  p { margin: 0; padding: calc(10 * var(--s)) 0; display: flex; gap: calc(24 * var(--s)); align-items: center; flex-wrap: wrap; }
+  p, .row { margin: 0; padding: calc(10 * var(--s)) 0; display: flex; gap: calc(24 * var(--s)); align-items: center; flex-wrap: wrap; }
   .btn { all: unset; display: inline-block; padding: calc(4 * var(--s)) calc(12 * var(--s)); border: 1px solid #fff5; border-radius: 3px; opacity: .6; cursor: pointer; }
   .btn:hover { opacity: 1; }
+  .btn.on { opacity: 1; background: #fff; color: #000; border-color: #fff; }
   .btn input[type=file] { display: none; }
   input[type=text] {
     appearance: none; width: calc(320 * var(--s)); margin: 0; padding: calc(4 * var(--s)) 0; border: 0; border-bottom: 1px solid #fff6; border-radius: 0; background: none; color: #fff;
