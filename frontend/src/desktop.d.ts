@@ -4,7 +4,8 @@ type DesktopStatus = {
   url: string; username: string; password: string; frame: boolean;
   share?: { webPort: number; port: number; password: string };
   build: { version: string; channel: string; commit: string; branch: string; builtAt: string; runUrl: string };
-  profile: DesktopProfile; musicFolder: string; source: string; canCopy: boolean;
+  profile: DesktopProfile; musicFolder: string; musicFolders: string[];
+  defaultMusicFolder: string; defaultMusicFolderAvailable: boolean; source: string; canCopy: boolean;
 };
 type ProfileEntry = { name: string; label: string; createdAt: number; setupComplete: boolean };
 // injected by the Electron preload (desktop/preload.js)
@@ -24,13 +25,13 @@ interface Window {
   spotify?: import('./lib/music').SpotifyBridge;
   desktop?: {
     status: () => Promise<DesktopStatus>;
-    start: (options?: { source?: 'folder' | 'spotify' | 'empty'; musicFolder?: string }) => Promise<DesktopStatus>;
+    start: (options?: { source?: 'folder' | 'empty'; musicFolder?: string; musicFolders?: string[] }) => Promise<DesktopStatus>;
     chooseFolder: () => Promise<string | null>;
     finishSetup: () => Promise<DesktopStatus>;
     profiles: () => Promise<ProfileEntry[]>;
     switchProfile: (mode: 'fresh' | 'copy' | 'continue' | 'existing', name?: string) => Promise<void>;
     showData: () => Promise<string>;
-    changeFolder: () => Promise<void>;
+    changeFolder: (mode?: 'replace' | 'add' | 'remove', folder?: string) => Promise<void>;
     restart: () => Promise<void>;
     onChange: (callback: (status: DesktopStatus) => void) => () => void;
     lanIp: () => Promise<string>;

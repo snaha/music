@@ -14,9 +14,9 @@
     try { await window.desktop!.switchProfile(mode, name); if (mode === 'existing') busy = ''; }
     catch (failure) { error = (failure as Error).message; busy = ''; }
   }
-  async function folder() {
+  async function folder(mode: 'add' | 'replace' | 'remove', path?: string) {
     busy = 'folder'; error = '';
-    try { await window.desktop!.changeFolder(); }
+    try { await window.desktop!.changeFolder(mode, path); }
     catch (failure) { error = (failure as Error).message; }
     finally { busy = ''; }
   }
@@ -27,12 +27,13 @@
     <h2 id="profile-title">Library &amp; profile</h2>
     <dl>
       <div><dt>Profile</dt><dd>{status.profile.label}{status.profile.existing ? ' · Existing Music data' : ' · Isolated data'}</dd></div>
-      <div><dt>Music folder</dt><dd>{status.musicFolder || 'No folder selected'}</dd></div>
+      <div><dt>Music folders</dt><dd>{#each status.musicFolders as path}<div class="folder-row"><span>{path}</span><Button variant="ghost" size="sm" disabled={!!busy} aria-label="Remove {path}" onclick={() => folder('remove', path)}>Remove</Button></div>{:else}No folders selected{/each}</dd></div>
       <div><dt>Build</dt><dd>{status.build.version}{#if status.build.commit} · {status.build.commit.slice(0, 7)}{/if}{#if status.build.branch} · {status.build.branch}{/if}</dd></div>
       <div><dt>Data folder</dt><dd>{status.profile.directory}</dd></div>
     </dl>
     <div class="actions">
-      <Button variant="outline" disabled={!!busy} onclick={folder}>Choose music folder</Button>
+      <Button variant="outline" disabled={!!busy} onclick={() => folder('add')}>Add music folder</Button>
+      <Button variant="ghost" disabled={!!busy} onclick={() => folder('replace')}>Replace music folders</Button>
       <Button variant="ghost" onclick={async () => { const problem = await window.desktop!.showData(); if (problem) error = problem; }}>Show data folder</Button>
     </div>
     <details>
@@ -68,6 +69,8 @@
   dl > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 16px; }
   dt, p { color: var(--ui-text-muted); }
   dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .folder-row { display: flex; align-items: center; gap: 12px; }
+  .folder-row > span { flex: 1; min-width: 0; }
   .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
   details { border-top: 1px solid var(--ui-border); }
   summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; font-weight: 550; cursor: pointer; list-style: none; }

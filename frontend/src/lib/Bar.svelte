@@ -9,6 +9,7 @@
   import Queue from './Queue.svelte';
   import { artworkPalette, fallbackPalette } from './artwork-palette';
   let palette = $state(fallbackPalette);
+  let failedCover = $state('');
   const playingCover = $derived(player.song?.cover ?? '');
   $effect(() => {
     const cover = playingCover;
@@ -120,7 +121,8 @@
     <button class="bar-toggle" onclick={revealPlayer} aria-label={player.queueOpen ? 'Close now playing' : 'Show songs'} aria-keyshortcuts="q" aria-expanded={player.queueOpen} aria-controls="player-view"></button>
     {#if player.song}
       <span class="left">
-        <img src={player.song.cover} alt="" />
+        {#if playingCover && playingCover !== failedCover}<img src={playingCover} alt="" onerror={() => (failedCover = playingCover)} />
+        {:else}<span class="cover-fallback" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="16" cy="16" r="12"/><circle cx="16" cy="16" r="8"/><circle cx="16" cy="16" r="2"/></svg></span>{/if}
         <span class="meta"><b>{player.song.title}</b> <span>{player.song.artist}{#if player.song.album}{' · '}{player.song.album}{/if}</span></span>
       </span>
     {:else}
@@ -167,7 +169,8 @@
   .bar .left, .ctl, .volume { pointer-events: none; }
   .bar .btns button, .volume button, .volume :global([data-slot=slider]) { pointer-events: auto; }
   .bar .left { flex: 1; min-width: 0; max-width: calc(50% - 100px); display: flex; align-items: center; align-self: stretch; gap: 10px; padding: 0 8px 0 16px; margin-left: -16px; text-align: left; }
-  .bar img { width: 42px; height: 42px; object-fit: cover; flex-shrink: 0; border-radius: 2px; }
+  .bar img, .cover-fallback { width: 42px; height: 42px; object-fit: cover; flex-shrink: 0; border-radius: 2px; }
+  .cover-fallback { display: grid; place-items: center; color: var(--play-muted); background: var(--play-surface); }
   .meta { min-width: 0; display: flex; flex-direction: column; gap: 3px; } .meta b, .meta span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; } .meta b { font-weight: 500; } .meta span { color: #b6b6b6; font-size: 11px; }
   .ctl { position: absolute; z-index: 1; left: 50%; transform: translateX(-50%); } .btns { display: flex; align-items: center; }
   .bar .btns button { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; }

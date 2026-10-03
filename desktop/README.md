@@ -2,7 +2,7 @@
 
 Electron shell that runs a bundled Navidrome in the background and shows the frontend in a
 window with the OS's native frame (switchable to frameless under Settings → Advanced; the
-window is rebuilt, since a frame can't be added to an open one). Fresh startup offers **Choose folder**, **Connect Spotify**, and **Explore first**. It creates an admin account with a
+window is rebuilt, since a frame can't be added to an open one). Fresh startup selects your system Music folder and offers **Add music folder**, **Open my library**, and **Explore first**. Spotify is optional in Settings. It creates an admin account with a
 random password and logs the frontend in silently. Existing installations retain their library and preferences.
 Navidrome and a small static server for the frontend listen on all interfaces so
 phones on the LAN can open the share QR code; the only protection is the share account's password. Ports are
@@ -29,7 +29,7 @@ Create a new fresh profile from Settings instead of deleting an existing databas
 Preview builds use the **Music Preview** application identity and an independent profile by default:
 `<appData>/Music Preview/profiles/default`. Later launches continue the last selected preview profile.
 
-- **Fresh**: choose a music folder, Spotify, or explore an empty collection. Music scans files in place; audio is not copied.
+- **Fresh**: open the default Music folder, add custom folders alongside it, or explore an empty collection. Remove any unwanted folder before opening. Music scans files in place; audio is not copied. Spotify is secondary in Settings.
 - **Copy existing**: quit normal Music first, then copy its index, history, tags and preferences into a new preview profile. The copy remains independent. Spotify may need reconnecting because its tokens depend on OS secure storage and application identity.
 - **Continue**: Settings → Advanced → Library & profile → Preview profiles switches between saved profiles. Switching restarts the app.
 - **Use existing directly**: an advanced option opens normal Music data after a warning. Quit other versions first; preview database changes may not be compatible with older builds. Prefer a copy.
@@ -68,7 +68,13 @@ gh workflow run desktop.yml --ref jose/spotify-experiment -f channel=preview -f 
 
 Only selected platforms must succeed before publication. Stable releases still come from `v*` tags and build both platforms. Build metadata is visible in Settings and stamped into preview filenames. Rerunning publication can resume missing assets without replacing downloads already published for that commit/run.
 
-Optionally set the repository **variable** `SPOTIFY_CLIENT_ID` to your developer app's public client ID. It is embedded in builds so allowlisted testers can connect without entering configuration. Do not supply a client secret or any user's tokens. Register `http://127.0.0.1:8888/callback` in that developer app and allowlist each tester. Without this variable, startup accepts a client ID or can skip Spotify entirely.
+Optionally set the repository **variable** `SPOTIFY_CLIENT_ID` to your developer app's public client ID. It is embedded in builds so allowlisted testers can connect without entering configuration. Do not supply a client secret or any user's tokens. Register `http://127.0.0.1:8888/callback` in that developer app and allowlist each tester. Without this variable, Settings → Spotify accepts a client ID. Local music requires no Spotify account.
+
+### Music folders
+
+Settings → Advanced → Library & profile lists all selected music folders and provides Add, Remove, and Replace actions. Changing folders restarts Music into the same profile. Removing a location does not remove its audio files. Nested locations and aliases are deduplicated so the same root is not scanned twice.
+
+Single-folder profiles retain their direct scanner root. Combined collections use stable directory links in the profile’s `music-folders/` directory; no links are written into the original music folders. Navidrome follows these links to scan and stream the originals. Once a profile uses a combined root, it retains that root when locations change. Existing single-folder profile configuration remains supported.
 
 Build locally with `MUSIC_CHANNEL=preview pnpm --dir desktop dist:mac` or `MUSIC_CHANNEL=preview pnpm --dir desktop dist` on Linux. The generated `build-info.json` and `builder-config.json` are ignored; source package metadata is not rewritten.
 

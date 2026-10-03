@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assertProfileClosed, copyProfile, launchProfile, listProfiles, loadProfile, lockProfile, newProfile, readJSON, rememberProfile, saveProfile, selectedProfile } from './profiles.js';
 import { migrateStorage } from './storage-migration.js';
+import { normalizeMusicFolders, prepareMusicRoot, profileMusicFolders } from './music-folders.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, 'dist');
@@ -105,7 +106,8 @@ const desktopStatus = () => ({
   url: local, username: st?.username || '', password: st?.password || '', frame: st?.frame ?? true,
   share: st ? { webPort: st.webPort, port: st.port, password: st.sharePassword } : undefined,
   build, profile: { name: profile.name, label: config.label || (profile.existing ? 'Music' : profile.name === 'default' ? 'Preview' : profile.name), directory: profile.directory, existing: profile.existing, portable: profile.portable },
-  musicFolder: config.musicFolder || '', source: config.source,
+  musicFolder: config.musicFolder || '', musicFolders: profileMusicFolders(config),
+  defaultMusicFolder: app.getPath('music'), defaultMusicFolderAvailable: existsSync(app.getPath('music')), source: config.source,
   canCopy: !profile.existing && existsSync(path.join(profile.existingDirectory, 'navidrome', 'credentials.json')),
 });
 const changed = () => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send('desktop:changed', desktopStatus()); };
@@ -129,7 +131,7 @@ app.whenReady().then(async () => {
   const dataDir = path.join(profile.directory, 'navidrome');
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   st = readJSON(path.join(dataDir, 'credentials.json'), null);
-  if (config.musicFolder && !existsSync(config.musicFolder)) { config.setupComplete = false; startupError = 'Your music folder is unavailable. Reconnect its drive or choose another folder.'; }
+  if (profileMusicFolders(config).some(folder => !existsSync(folder))) { config.setupComplete = false; startupError = 'A music folder is unavailable. Reconnect its drive or remove it before opening your library.'; }
   phase = config.setupComplete ? 'starting' : 'setup';
   for (const method of ['write', 'list', 'clear', 'stats']) ipcMain.handle(`music-history:${method}`, async (event, args) => {
     trusted(event);
@@ -213,7 +215,7 @@ app.whenReady().then(async () => {
   handleDesktop('lan-ip', () => lanIp());
   handleDesktop('choose-folder', async (event) => {
     const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Choose your music folder', defaultPath: config.musicFolder || app.getPath('music'), properties: ['openDirectory'] });
-    return result.canceled ? null : result.filePaths[0];
+    return result.canceled ? null : normalizeMusicFolders([result.filePaths[0]], profile.directory)[0];
   });
   handleDesktop('finish-setup', () => {
     if (phase !== 'ready') throw new Error('Wait for your library to finish starting.');
@@ -263,12 +265,13 @@ app.whenReady().then(async () => {
     if (startPromise) return startPromise;
     const task = (async () => {
       try {
-        if (options.source && !['folder', 'spotify', 'empty'].includes(options.source)) throw new Error('Choose a music folder or Spotify.');
+        if (options.source && !['folder', 'empty'].includes(options.source)) throw new Error('Choose your music folders. Spotify is available in Settings.');
         if (options.source === 'folder') {
-          if (typeof options.musicFolder !== 'string' || !path.isAbsolute(options.musicFolder) || !statSync(options.musicFolder).isDirectory()) throw new Error('Choose an available music folder.');
-          config.musicFolder = options.musicFolder; config.source = 'local';
-        } else if (options.source) { config.musicFolder = ''; config.source = options.source; }
-        if (config.musicFolder && !existsSync(config.musicFolder)) throw new Error('Your music folder is unavailable. Reconnect its drive or choose another folder.');
+          config.musicFolders = normalizeMusicFolders(options.musicFolders ?? [options.musicFolder], profile.directory);
+          config.musicFolder = config.musicFolders[0]; config.source = 'local';
+        } else if (options.source) { config.musicFolder = ''; config.musicFolders = []; config.source = options.source; }
+        const folders = profileMusicFolders(config);
+        if (folders.length) config.musicFolders = normalizeMusicFolders(folders, profile.directory);
         phase = 'starting'; startupError = ''; changed();
         // An older build does not take our profile lock. Its saved listening ports
         // provide a conservative guard against opening its live databases.
@@ -276,12 +279,13 @@ app.whenReady().then(async () => {
           const old = readJSON(path.join(dataDir, 'credentials.json'), {});
           if ((old.port && !(await isFree(old.port))) || (old.webPort && !(await isFree(old.webPort)))) throw new Error('Another Music version is using this profile. Quit it before continuing.');
         }
-        const music = config.musicFolder || path.join(profile.directory, 'empty-music');
-        mkdirSync(music, { recursive: true, mode: 0o700 });
+        config.combinedMusicFolders ||= folders.length > 1;
+        const music = folders.length ? prepareMusicRoot(profile.directory, config.musicFolders, config.combinedMusicFolders) : path.join(profile.directory, 'empty-music');
+        if (!folders.length) mkdirSync(music, { recursive: true, mode: 0o700 });
         st = await state(dataDir); local = `http://127.0.0.1:${st.port}`;
         const child = spawn(navidromeBin, [], {
           stdio: 'inherit', env: { ...process.env, ND_ADDRESS: '0.0.0.0', ND_PORT: String(st.port), ND_DATAFOLDER: dataDir, ND_CACHEFOLDER: path.join(dataDir, 'cache'), ND_MUSICFOLDER: music,
-            ND_DEVAUTOCREATEADMINPASSWORD: st.password, ND_ENABLEINSIGHTSCOLLECTOR: 'false', ND_SCANSCHEDULE: '1h', ND_LOGLEVEL: 'warn' },
+            ND_DEVAUTOCREATEADMINPASSWORD: st.password, ND_ENABLEINSIGHTSCOLLECTOR: 'false', ND_SCANNER_SCHEDULE: '1h', ND_SCANNER_FOLLOWSYMLINKS: 'true', ND_LOGLEVEL: 'warn' },
         });
         navidrome = child;
         child.on('error', error => { startupError = `Cannot start the bundled music server: ${error.message}`; phase = 'error'; changed(); });
@@ -290,7 +294,7 @@ app.whenReady().then(async () => {
         frontendServer = serveFrontend(st.webPort);
         musicDatabase = new MusicDatabase(path.join(profile.directory, 'music.sqlite'));
         phase = 'ready';
-        if (options.source && options.source !== 'spotify') config.setupComplete = true;
+        if (options.source) config.setupComplete = true;
         saveProfile(profile, config); changed();
         void spotify.refreshLibrary();
         return desktopStatus();
@@ -304,10 +308,16 @@ app.whenReady().then(async () => {
     finally { if (startPromise === task) startPromise = null; }
   }
   handleDesktop('start', (_event, options) => start(options));
-  handleDesktop('change-folder', async (event) => {
-    const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Choose your music folder', defaultPath: config.musicFolder || app.getPath('music'), properties: ['openDirectory'] });
-    if (result.canceled) return;
-    config.musicFolder = result.filePaths[0]; config.source = 'local'; config.setupComplete = true;
+  handleDesktop('change-folder', async (event, mode = 'replace', folder) => {
+    if (!['replace', 'add', 'remove'].includes(mode)) throw new Error('Choose how to update your music folders.');
+    if (mode === 'remove') {
+      config.musicFolders = profileMusicFolders(config).filter(item => item !== folder);
+    } else {
+      const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Choose your music folder', defaultPath: config.musicFolder || app.getPath('music'), properties: ['openDirectory'] });
+      if (result.canceled) return;
+      config.musicFolders = normalizeMusicFolders([...(mode === 'add' ? profileMusicFolders(config) : []), result.filePaths[0]], profile.directory);
+    }
+    config.musicFolder = config.musicFolders[0] || ''; config.source = config.musicFolders.length ? 'local' : 'empty'; config.setupComplete = true;
     saveProfile(profile, config);
     scheduleRelaunch(profile.existing ? ['--use-existing'] : ['--data-dir', profile.root, '--profile', profile.name]);
   });

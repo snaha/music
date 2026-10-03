@@ -35,7 +35,7 @@ Extract this entire folder to a writable location. ${process.platform === 'darwi
 
 The launcher keeps library indexes, history, preferences and Spotify cache in Data/profiles/. Audio files remain in the music folder you choose.
 
-Fresh startup offers a music folder, Spotify, or Explore first. If Music already exists on this computer, quit it before choosing Copy existing profile. Spotify may need reconnecting.
+Fresh startup selects your Music folder. Add custom music folders, choose Open my library, or Explore first. Spotify is optional in Settings. If Music already exists on this computer, quit it before choosing Copy existing profile. Spotify may need reconnecting.
 
 Settings → Advanced → Library & profile shows the build and data folder and lets you create or switch profiles.
 

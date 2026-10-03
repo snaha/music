@@ -4,6 +4,7 @@
   import { player, play, toggle, enqueue } from './player.svelte';
   import type { Collection, Track } from './music';
   import Icon from './ui/icon.svelte';
+  import { hasSpotifyLibrary } from './spotify.svelte';
   let { kind = $bindable('all'), top, cols, gap, card, onartist, onclear }: {
     kind: string; top: number; cols: number; gap: number; card: Snippet<[Collection]>;
     onartist: (artist: Collection) => void; onclear: () => void;
@@ -66,7 +67,7 @@
   {/each}
   {#if !count && !catalogSearch.loading && !Object.keys(catalogSearch.errors).length}<p class="notice">No matches for “{catalogSearch.query}”. Try a song, album, artist or playlist name.</p>{/if}
   {#if catalogSearch.moreLocal || catalogSearch.moreSpotify}<button class="more" onclick={moreCatalogSearch} disabled={catalogSearch.loading}>{catalogSearch.loading ? 'Loading results…' : 'Load more results'}</button>{/if}
-  {#if catalogSearch.source !== 'local' && window.spotify}<p class="footnote">Spotify searches the saved library on this device. Restricted playlist contents are unavailable; new songs appear as indexing completes.</p>{/if}
+  {#if catalogSearch.source !== 'local' && hasSpotifyLibrary()}<p class="footnote">Spotify searches the saved library on this device. Restricted playlist contents are unavailable; new songs appear as indexing completes.</p>{/if}
 </section>
 
 {#snippet songResults()}

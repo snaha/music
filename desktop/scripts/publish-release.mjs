@@ -31,7 +31,7 @@ Choose the download matching your computer:
 - **Linux x64:** AppImage or deb, when present.
 - **Portable:** extract the complete portable folder and use its Open Music launcher. Its Data folder keeps this build’s profiles separate.
 
-Regular previews use their own profile outside the app. Fresh startup offers a music folder, Spotify, or Explore first. To copy an existing Music profile, quit Music first. Files are scanned where they are; audio is not copied. Spotify may need reconnecting. Settings → Advanced shows the active profile and build.
+Regular previews use their own profile outside the app. Fresh startup selects the Music folder; add custom folders and open your collection, or Explore first. Spotify is optional in Settings. To copy an existing Music profile, quit Music first. Files are scanned where they are; audio is not copied. Spotify may need reconnecting. Settings → Advanced shows the selected folders, active profile and build.
 
 ${process.env.MUSIC_NOTARIZED === 'true' ? 'Mac builds use Developer ID signing and notarization.' : 'Mac builds are not notarized and may be blocked at first launch. See [Apple’s launch guidance](https://support.apple.com/en-us/102445).'}
 

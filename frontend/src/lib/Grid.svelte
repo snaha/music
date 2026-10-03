@@ -13,7 +13,7 @@
   import { session } from './api.svelte';
   import CatalogSearch from './CatalogSearch.svelte';
   import { catalogSearch, startCatalogSearch } from './catalog-search.svelte';
-  import { spotify, spotifyPlayable, spotifyDimmed, spotifyMessage, spotifyRecoveryLabel, checkSpotify } from './spotify.svelte';
+  import { spotify, spotifyPlayable, spotifyDimmed, spotifyMessage, spotifyRecoveryLabel, checkSpotify, hasSpotifyLibrary } from './spotify.svelte';
   import { player, collectionPlayback } from './player.svelte';
   import CollectionPlayback from './CollectionPlayback.svelte';
   import DigPanel from './DigPanel.svelte';
@@ -167,7 +167,7 @@
   function open(view: 'settings') { settingsTab = 'appearance'; player.viewFrom = 'right'; player.view = rightView === view ? '' : view; closeModes(); }
   function spotifySettings() { open('settings'); settingsTab = 'spotify'; }
   async function chooseMusicFolder() {
-    try { await window.desktop!.changeFolder(); }
+    try { await window.desktop!.changeFolder('add'); }
     catch (error) { library.error = (error as Error).message; }
   }
   function onmove(e: PointerEvent) {
@@ -201,7 +201,7 @@
     <div class="library-controls" role="group" aria-label="Library filters and sorting">
     {#if searching}
       <div class="collection-filter"><LibrarySelect label="Search result type" bind:value={searchKind} onchange={() => scroller?.scrollTo({ top: 0 })} options={[{ value: 'all', label: 'All results' }, { value: 'song', label: 'Songs' }, { value: 'album', label: 'Albums' }, { value: 'artist', label: 'Artists' }, { value: 'playlist', label: 'Playlists' }]} /></div>
-      <div class="show-filter"><LibrarySelect label="Search source" bind:value={library.source} onchange={changeSource} options={[{ value: 'all', label: 'All sources' }, { value: 'local', label: 'Local' }, ...(window.spotify ? [{ value: 'spotify', label: 'Spotify' }] : [])]} /></div>
+      <div class="show-filter"><LibrarySelect label="Search source" bind:value={library.source} onchange={changeSource} options={[{ value: 'all', label: 'All sources' }, { value: 'local', label: 'Local' }, ...(hasSpotifyLibrary() || library.source === 'spotify' ? [{ value: 'spotify', label: 'Spotify' }] : [])]} /></div>
     {:else}
     <div class="collection-filter"><LibrarySelect label="Collection type" bind:value={collectionMode} onchange={() => { showFilter = 'all'; changeMode(collectionMode as Mode); }} options={[{ value: 'albums', label: 'Albums' }, { value: 'playlists', label: 'Playlists' }]} /></div>
     <div class="show-filter"><LibrarySelect label="Show music" bind:value={showFilter} onchange={filterChanged} options={[{ value: 'all', label: 'All music' }, { value: 'favorites', label: 'Favorites' }, { value: 'mood', label: 'Tagged for Dig' }, ...genres.map(genre => ({ value: `genre:${genre}`, label: genre }))]} /></div>
@@ -225,7 +225,7 @@
     <div class="secondary-controls"><button class="icon-button" aria-label="Back to library" onclick={() => { toolbar.mode = 'library'; toolbar.selecting = false; }}><Icon name="back" /></button>
     {#if filtersOpen}
       <div class="filter-tray">
-        <LibrarySelect label="Filter by source" bind:value={library.source} onchange={changeSource} options={[{ value: 'all', label: 'All sources' }, { value: 'local', label: 'Local' }, ...(window.spotify ? [{ value: 'spotify', label: 'Spotify' }] : [])]} />
+        <LibrarySelect label="Filter by source" bind:value={library.source} onchange={changeSource} options={[{ value: 'all', label: 'All sources' }, { value: 'local', label: 'Local' }, ...(hasSpotifyLibrary() || library.source === 'spotify' ? [{ value: 'spotify', label: 'Spotify' }] : [])]} />
         {#if !searching && library.mode === 'albums'}<LibrarySelect label="Filter by artist" bind:value={artistFilter} onchange={filterChanged} options={[{ value: '', label: 'All artists' }, ...artists.map(name => ({ value: name, label: name }))]} />{/if}
         <Button variant="ghost" size="sm" onclick={resetFilters}><Icon name="reset" /> Reset filters</Button>
         <span class="library-count">{searching ? 'Search covers every collection type' : `${shown.length} of ${sourceTiles.length} ${library.mode}`}</span>
@@ -242,7 +242,7 @@
     </div>
   {/if}
   {#if sort === 'color'}<div class="color-status" role="status">{catalog.colorsLoading ? `Reading cover colors · ${colorsReady} ready` : 'Cover colors ready'}<button disabled={catalog.colorsLoading} onclick={applySort}>Apply color sort</button></div>{/if}
-  {#if window.spotify && !spotifyPlayable()}<div class="spotify-availability" role="status"><span>{spotifyMessage()}</span><button onclick={() => spotify.availability === 'offline' || spotify.availability === 'checking' ? checkSpotify(true) : open('settings')}>{spotifyRecoveryLabel()}</button></div>{/if}
+  {#if hasSpotifyLibrary() && !spotifyPlayable()}<div class="spotify-availability" role="status"><span>{spotifyMessage()}</span><button onclick={() => spotify.availability === 'offline' || spotify.availability === 'checking' ? checkSpotify(true) : spotifySettings()}>{spotifyRecoveryLabel()}</button></div>{/if}
 </div>
 
 {#snippet collectionCard(t: Tile)}
@@ -296,12 +296,12 @@
   <div class="empty-library">
     {#if window.desktop && !library.tiles.length && !desktop.status?.musicFolder && !spotify.connected}
       <h2>Your music starts here.</h2>
-      <p>Choose a music folder or connect Spotify to fill your collection.</p>
-      <button onclick={chooseMusicFolder}>Choose music folder</button><button onclick={spotifySettings}>Connect Spotify</button>
+      <p>Add a music folder to start your collection.</p>
+      <button onclick={chooseMusicFolder}>Add music folder</button>
     {:else if window.desktop && desktop.status?.musicFolder && !library.tiles.length && library.mode === 'albums' && library.source !== 'spotify'}
       <p>{library.scan.error || library.error ? 'Your music folder could not be loaded.' : !library.scan.checked ? 'Checking your music folder…' : library.scan.scanning ? 'Your collection is being indexed. Albums will appear here as they’re found.' : 'No music was found in this folder.'}</p>
-      <p style:overflow-wrap="anywhere">{desktop.status.musicFolder}</p>
-      <button onclick={chooseMusicFolder}>Choose music folder</button>
+      {#each desktop.status.musicFolders as folder}<p style:overflow-wrap="anywhere">{folder}</p>{/each}
+      <button onclick={chooseMusicFolder}>Add music folder</button>
     {:else}
       <p>{library.scan.scanning ? 'Your collection is being indexed. Albums will appear here as they’re found.' : library.source === 'spotify' && !spotify.connected ? 'Connect Spotify to see your albums, likes and playlists.' : 'No music matches this view.'}</p>
       {#if digActive()}<p>Add mood and sound tags from an album’s menu, or clear Dig to see all music.</p><button onclick={resetDig}>Clear Dig</button>{:else if !library.scan.scanning}<button onclick={resetFilters}>Reset filters</button>{/if}

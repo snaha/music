@@ -41,6 +41,7 @@ export async function selectSpotifyDevice(id: string, sameMac: boolean) {
 }
 
 export function spotifyPlayable() { return !!window.spotify && spotify.connected && spotify.availability === 'ready'; }
+export function hasSpotifyLibrary() { return !!window.spotify && (spotify.connected || spotify.albums.length > 0 || spotify.collections.length > 0); }
 export function spotifyDimmed() { return ['disconnected', 'reconnect', 'offline', 'restricted'].includes(spotify.availability); }
 export function spotifyMessage() {
   if (spotify.availability === 'disconnected' && !spotify.albums.length && !spotify.collections.length) return 'Spotify not connected';

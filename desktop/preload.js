@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('desktop', {
   status: () => desktopCall('status'), start: options => desktopCall('start', options),
   chooseFolder: () => desktopCall('choose-folder'), finishSetup: () => desktopCall('finish-setup'),
   profiles: () => desktopCall('profiles'), switchProfile: (mode, name) => desktopCall('switch-profile', mode, name),
-  showData: () => desktopCall('show-data'), changeFolder: () => desktopCall('change-folder'),
+  showData: () => desktopCall('show-data'), changeFolder: (mode, folder) => desktopCall('change-folder', mode, folder),
   restart: () => desktopCall('restart'),
   lanIp: () => desktopCall('lan-ip'), setFrame: on => desktopCall('set-frame', on),
   onChange: callback => {
