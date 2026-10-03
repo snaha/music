@@ -96,7 +96,9 @@ app.whenReady().then(async () => {
   navidrome.on('exit', (code) => { if (!app.isQuitting) { dialog.showErrorBox('Music', `Navidrome stopped (exit code ${code})`); app.quit(); } });
   serveFrontend(st.webPort);
 
-  const page = `http://127.0.0.1:${st.webPort}/`;
+  // development: MUSIC_DEV_URL points the window at a Vite dev server, so edits to the frontend apply live;
+  // the built frontend is still served for phones on the LAN
+  const page = process.env.MUSIC_DEV_URL || `http://127.0.0.1:${st.webPort}/`;
   // a frame can't be added to or removed from an open window, so the window is built anew for it
   async function open(bounds, maximized) {
     const desktop = {
