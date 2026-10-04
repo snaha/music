@@ -110,8 +110,8 @@
       {/each}
     </span>
   </div>
-  {#if player.error || player.pending || player.requesting}
-    <div class="playback-status" role="status">{player.error || (player.requesting ? 'Loading tracks…' : 'Connecting playback…')}
+  {#if player.error || player.pending || player.requesting || player.randomRequesting}
+    <div class="playback-status" role="status">{player.error || (player.requesting || player.randomRequesting ? 'Loading tracks…' : 'Connecting playback…')}
       {#if player.error}<button onclick={() => { player.viewFrom = 'right'; player.view = 'settings'; }}>Settings</button><button onclick={() => (player.error = '')} aria-label="Dismiss playback message">×</button>{/if}
     </div>
   {/if}

@@ -8,7 +8,7 @@ import { recordHistory, saveHistory, historyTrack, type ListeningContext, type H
 export type Order = 'normal' | 'shuffle' | 'random';
 export type Grid = { count: number; key: string; find(albumId: string): number; song(n: number): Promise<Track | undefined> };
 export const player = $state({
-  queue: [] as Track[], index: -1, blockedIndex: -1, playing: false, pending: false, requesting: false, requestRevision: 0, suspended: false, error: '',
+  queue: [] as Track[], index: -1, blockedIndex: -1, playing: false, pending: false, requesting: false, randomRequesting: false, requestRevision: 0, suspended: false, error: '',
   time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, queueTab: 'queue' as 'queue' | 'history', shortcutsOpen: false, topHidden: false, visOpen: false,
   loadingCollectionId: '', volume: 100,
   view: '' as '' | 'share' | 'settings', viewFrom: 'bottom' as 'bottom' | 'right',
@@ -24,6 +24,7 @@ audio.preload = 'auto'; warmAudio.preload = 'metadata';
 let localTrack: Track | undefined, scrobbled = false;
 let intent = 0, perm: Uint32Array = new Uint32Array(0), cursor = -1;
 let randomGrid: Grid | undefined, randomDraw = 0;
+function cancelRandomLookup() { randomDraw++; player.randomRequesting = false; }
 let queueVersion = 0;
 let historyContext: ListeningContext | undefined;
 function freshHistoryContext() { historyContext = undefined; }
@@ -105,7 +106,7 @@ export function play(queue: Track[], index = 0) {
   if (blocked(queue[Math.max(0, index)])) return -1;
   player.requestRevision++;
   queueVersion++; freshHistoryContext();
-  randomDraw++; randomGrid = undefined;
+  cancelRandomLookup(); randomGrid = undefined;
   player.queue = queue.map((t) => ({ ...t })); player.index = Math.max(0, index);
   if (player.order === 'random') player.order = 'normal';
   rebuildShuffle();
@@ -122,7 +123,7 @@ export function appendToSession(tracks: Track[], version: number) {
   prepareNext(); return true;
 }
 export function enqueue(tracks: Track[]) {
-  if (player.order === 'random') { randomGrid = undefined; randomDraw++; player.order = 'normal'; }
+  if (player.order === 'random') { randomGrid = undefined; cancelRandomLookup(); player.order = 'normal'; }
   appendToSession(tracks, queueVersion); player.queueOpen = true;
   return queueVersion;
 }
@@ -151,7 +152,7 @@ export function removeQueue(index: number) {
 export function setOrder(order: Order, source: () => Grid) {
   if (order === player.order) return;
   freshHistoryContext();
-  player.order = order; randomDraw++;
+  player.order = order; cancelRandomLookup();
   if (order === 'random') {
     randomGrid = source(); // freeze the source selection for this listening session
     perm = shuffle(randomGrid.count); cursor = -1;
@@ -165,7 +166,7 @@ async function nextRandom() {
   const grid = randomGrid; if (!grid?.count) return;
   if (player.index < player.queue.length - 1) { void start(player.index + 1); return; }
   if (++cursor >= perm.length) { perm = shuffle(grid.count); cursor = 0; }
-  const mine = ++randomDraw; player.requesting = true;
+  const mine = ++randomDraw; player.randomRequesting = true;
   try {
     const track = await grid.song(perm[cursor]);
     if (mine !== randomDraw) return;
@@ -174,7 +175,7 @@ async function nextRandom() {
     freshHistoryContext();
     player.queue.push({ ...track }); void start(player.queue.length - 1);
   } catch (error) { if (mine === randomDraw) fail(error); }
-  finally { if (mine === randomDraw) player.requesting = false; }
+  finally { if (mine === randomDraw) player.randomRequesting = false; }
 }
 export function jumpRandom(source: () => Grid) {
   const hadSong = !!player.song;
@@ -200,7 +201,7 @@ export function replayHistory(entry: HistoryEntry) {
 }
 export function jump(index: number) {
   player.requestRevision++;
-  randomDraw++;
+  cancelRandomLookup();
   if (blocked(player.queue[index])) return;
   if (player.order === 'shuffle') { freshHistoryContext(); player.index = index; rebuildShuffle(); }
   void start(index);
@@ -214,6 +215,7 @@ export function next() {
 }
 export function prev() {
   player.requestRevision++;
+  cancelRandomLookup();
   if (player.time > 3) return seek(0);
   if (player.order === 'shuffle') { if (cursor > 0 && !blocked(player.queue[perm[cursor - 1]])) void start(perm[--cursor]); }
   else if (player.index > 0) void start(player.index - 1);
@@ -222,7 +224,7 @@ export async function pause() {
   player.requestRevision++;
   player.loadingCollectionId = '';
 
-  const mine = ++intent; randomDraw++; player.requesting = false; player.pending = true;
+  const mine = ++intent; cancelRandomLookup(); player.requesting = false; player.pending = true;
   try { await controller.pause(); if (mine === intent) { playing(false); player.pending = false; } }
   catch (error) { if (mine === intent) fail(error); }
 }

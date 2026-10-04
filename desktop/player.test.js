@@ -71,5 +71,24 @@ test('actual local player loads collections, controls audio, preserves queue occ
     m.play([{ ...local, source: 'unsupported' }]); assert.deepEqual(m.player.queue.map(t => t.id), queue, 'unsupported saved sources retain the current queue');
     m.clearHistory(); assert.equal(m.listeningHistory.entries.length, 0);
     m.removeQueue(m.player.index); await settle(); assert.ok(m.player.song);
+    const randomTrack = { ...other, id: 'local:track:random', rawId: 'random' };
+    for (const cancel of [grid => m.setOrder('normal', () => grid), grid => m.setOrder('shuffle', () => grid), () => m.play([local]), () => m.enqueue([other]), () => m.jump(0), () => m.prev(), () => m.pause()]) {
+      let resolveSong;
+      const grid = { count: 1, key: 'deferred', find: () => 0, song: () => new Promise(resolve => { resolveSong = resolve; }) };
+      m.setOrder('normal', () => grid);
+      m.jumpRandom(() => grid);
+      assert.equal(m.player.randomRequesting, true, 'random lookup responds immediately');
+      await cancel(grid);
+      assert.equal(m.player.randomRequesting, false, 'new intentions clear random loading immediately');
+      const ids = m.player.queue.map(track => track.id);
+      resolveSong(randomTrack); await settle();
+      assert.deepEqual(m.player.queue.map(track => track.id), ids, 'cancelled random lookup cannot append a stale track');
+      assert.equal(m.player.randomRequesting, false);
+    }
+    m.player.requesting = true;
+    const grid = { count: 1, key: 'separate-loading', find: () => 0, song: async () => randomTrack };
+    m.jumpRandom(() => grid); m.setOrder('normal', () => grid); await settle();
+    assert.equal(m.player.requesting, true, 'cancelling random loading does not clear an independent collection request');
+    m.player.requesting = false;
   } finally { m.disposePlayback(); }
 });
