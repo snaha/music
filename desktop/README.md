@@ -40,6 +40,8 @@ The **portable** archive contains the app, an empty `Data/` folder, a launcher a
 
 Keep `Data/` when replacing the app for an update. Duplicate the complete folder to compare versions with independent state. Audio remains in its original folder; music-folder paths and system permissions may need updating on another computer.
 
+On Linux, replace `Music.AppImage` with the same-named file from the new portable download. When updating an older portable folder with a versioned AppImage filename, replace `Open Music.sh` too and retain `Data/`.
+
 Supported launch options:
 
 ```sh
