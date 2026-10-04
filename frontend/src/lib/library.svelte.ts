@@ -106,8 +106,9 @@ export async function* trackPages(t: Tile): AsyncGenerator<Track[]> {
   if (t.indexing) throw new Error('This album is still being indexed. Its included tracks will appear shortly.');
   if (!t.available) throw new Error('This collection has no playable tracks. Check your music folders in Settings.');
   const api = session.api!;
-  if (t.kind === 'album') { yield (ok(await api.getAlbum({ id: t.rawId })).album.song ?? []).map(localTrack); return; }
-  if (t.kind === 'playlist') { yield (ok(await api.getPlaylist({ id: t.rawId })).playlist.entry ?? []).map(localTrack); return; }
+  const collectionTrack = (song: Child, index: number): Track => ({ ...localTrack(song), playbackOriginIndex: index });
+  if (t.kind === 'album') { yield (ok(await api.getAlbum({ id: t.rawId })).album.song ?? []).map(collectionTrack); return; }
+  if (t.kind === 'playlist') { yield (ok(await api.getPlaylist({ id: t.rawId })).playlist.entry ?? []).map(collectionTrack); return; }
   const albums = ok(await api.getArtist({ id: t.rawId })).artist.album ?? [];
   if (albums.length) yield* trackPages(album(rnd(albums)));
 }

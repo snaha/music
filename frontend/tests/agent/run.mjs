@@ -315,6 +315,20 @@ try {
     assert(`!!document.querySelector('[aria-label="Filter by artist"]')`, 'Keyboard must activate toolbar modes');
     run('press', 'Escape');
     run('press', 'Escape');
+    run('mouse', 'move', String(width / 2), '4');
+    run('fill', '[aria-label="Collection type"]', 'Playlists');
+    run('click', '[role="option"]');
+    run('click', '.tile[aria-label^="Open Quiet evenings"]');
+    run('wait', '--fn', 'document.querySelectorAll(".album-view .track-row").length===3');
+    run('click', '.album-view .track-row:nth-child(1) .track');
+    run('wait', '--fn', 'document.querySelectorAll(".album-view .track-row.current").length===1 && document.querySelector(".album-view .track-row:nth-child(1).current") && !window.__auditAudio[0].paused');
+    run('click', '.album-view .track-row:nth-child(3) .track');
+    run('wait', '--fn', 'document.querySelectorAll(".album-view .track-row.current").length===1 && document.querySelector(".album-view .track-row:nth-child(3).current") && !window.__auditAudio[0].paused');
+    assert(`!document.querySelector('.album-view .track-row:nth-child(1).current')`, 'Selecting the later duplicate must move playback and listening state to that occurrence');
+    run('click', '.album-view .track-row:nth-child(3) .track');
+    run('wait', '--fn', 'window.__auditAudio[0].paused');
+    assert(`document.querySelector('.album-view .track-row:nth-child(3).current .track').getAttribute('aria-label').startsWith('Play ')`, 'Selecting the current occurrence again must pause it');
+    capture(size, 'playlist-duplicate-occurrence');
     results.push({ size, status: 'passed' });
     console.log(`${size}: passed`);
   }

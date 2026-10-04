@@ -46,6 +46,9 @@ test('actual local player loads collections, controls audio, preserves queue occ
     await m.pick(origin); await settle();
     assert.equal(m.player.playing, true); assert.deepEqual(m.player.queue.map(t => t.id), [local.id, other.id, local.id]);
     assert.equal(m.collectionPlayback(origin).listening, true);
+    const collectionTracks = m.player.queue.map(track => ({ ...track }));
+    assert.equal(m.collectionTrackIsCurrent(origin, collectionTracks, 0), true);
+    assert.equal(m.collectionTrackIsCurrent(origin, collectionTracks, 2), false, 'only the selected duplicate occurrence is current');
     assert.equal(audioElements[0].paused, false); assert.match(audioElements[0].src, /id=1/);
     m.setVolume(42); assert.equal(audioElements[0].volume, .42); assert.equal(storage.get('music.volume'), '42');
     m.setVolume(200); assert.equal(m.player.volume, 100);
@@ -57,12 +60,16 @@ test('actual local player loads collections, controls audio, preserves queue occ
     m.jump(2); await settle();
     const entry = m.listeningHistory.entries[0];
     assert.equal(entry.index, 2); assert.equal(entry.context.queue.length, 3); assert.equal(entry.context.origin.id, origin.id);
+    assert.equal(m.collectionTrackIsCurrent(origin, collectionTracks, 0), false);
+    assert.equal(m.collectionTrackIsCurrent(origin, collectionTracks, 2), true);
     m.moveQueue(0, 1); assert.equal(m.player.index, 2, 'reorder retains the current duplicate occurrence');
     m.removeQueue(0); assert.equal(m.player.index, 1);
+    assert.equal(m.collectionTrackIsCurrent(origin, collectionTracks, 2), true, 'collection occurrence survives queue edits');
     const version = m.enqueue([other]); assert.equal(m.player.queueOpen, true); assert.equal(m.player.playing, true);
     m.play([other]); await settle(); assert.equal(m.appendToSession([local], version), false, 'stale collection pages cannot extend a replacement queue');
     m.replayHistory(entry); await settle(); assert.equal(m.player.index, 2); assert.equal(m.player.queue.length, 3);
     assert.equal(m.player.song.playbackOrigin.id, origin.id);
+    assert.equal(m.collectionTrackIsCurrent(origin, collectionTracks, 2), true, 'history replay retains the collection occurrence');
     await m.pause(); await m.addCollection(origin); assert.equal(m.player.playing, false, 'queueing a collection never starts playback');
     assert.equal(m.player.queue.length, 6);
     const queue = m.player.queue.map(t => t.id);

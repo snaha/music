@@ -68,6 +68,11 @@ export function collectionPlayback(collection: Pick<Collection, 'id'>) {
   const loading = player.loadingCollectionId === collection.id || (current && player.pending);
   return { current, loading, listening: current && player.playing && !player.suspended && !player.pending };
 }
+export function collectionTrackIsCurrent(collection: Pick<Collection, 'id'>, tracks: Track[], index: number) {
+  const track = tracks[index], current = player.song;
+  if (!track || current?.id !== track.id || current.playbackOrigin?.id !== collection.id) return false;
+  return current.playbackOriginIndex === undefined ? tracks.filter(song => song.id === track.id).length === 1 : current.playbackOriginIndex === index;
+}
 function prepareNext() {
   const i = player.order === 'shuffle' ? perm[cursor + 1] : player.index + 1;
   const track = player.queue[i];

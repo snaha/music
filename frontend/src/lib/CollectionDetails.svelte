@@ -2,7 +2,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { keyboardScope } from './keyboard';
   import { trackPages, pick, addCollection, type Tile } from './library.svelte';
-  import { play, player, toggle, enqueue } from './player.svelte';
+  import { collectionTrackIsCurrent, play, player, toggle, enqueue } from './player.svelte';
   import { artworkPalette, fallbackPalette } from './artwork-palette';
   import { metadata, saveMetadata } from './discovery.svelte';
   import CollectionPlayback from './CollectionPlayback.svelte';
@@ -32,7 +32,7 @@
   });
   function listen(index: number) {
     const track = tracks[index]; if (!track?.available) return;
-    if (player.song?.id === track.id && player.song.playbackOrigin?.id === tile.id) { void toggle(); return; }
+    if (collectionTrackIsCurrent(tile, tracks, index)) { void toggle(); return; }
     play(tracks.map(track => ({ ...track, playbackOrigin: tile })), index);
   }
   async function toggleActions() { actions = !actions; if (actions) { await tick(); document.querySelector<HTMLButtonElement>('#album-actions button')?.focus(); } }
@@ -64,7 +64,7 @@
       {#if error}<p class="notice" role="alert">{error}</p>{/if}
       {#if loading && !tracks.length}<p class="notice" role="status">Loading tracks…</p>{/if}
       {#each shown as { track, index } (`${index}:${track.id}`)}
-        {@const current = player.song?.id === track.id && player.song?.playbackOrigin?.id === tile.id}
+        {@const current = collectionTrackIsCurrent(tile, tracks, index)}
         <div class="track-row" class:current>
           <button class="track" disabled={!track.available} aria-label="{current && player.playing ? 'Pause' : 'Play'} {track.title}" onclick={() => listen(index)}>
             <span class="number">{#if current && player.playing}<Icon name="listening" />{:else}{index + 1}{/if}</span>
