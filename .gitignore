@@ -15,3 +15,6 @@ navidrome/data/
 
 # Local design review captures
 .impeccable/review/
+
+# Extracted local preview builds
+.local-builds/

@@ -1,4 +1,5 @@
 import { logPlayback } from './playback-log';
+import { readPreference, writePreference } from './preferences';
 import { session, streamUrl } from './api.svelte';
 import { PlaybackController, type PlaybackAdapter } from './playback-controller';
 import { shuffle } from './shuffle';
@@ -8,19 +9,31 @@ import { recordHistory, saveHistory, historyTrack, type ListeningContext, type H
 export type Order = 'normal' | 'shuffle' | 'random';
 export type Grid = { count: number; key: string; find(albumId: string): number; song(n: number): Promise<Track | undefined> };
 export const player = $state({
-  queue: [] as Track[], index: -1, blockedIndex: -1, playing: false, pending: false, requesting: false, randomRequesting: false, requestRevision: 0, suspended: false, error: '',
+  queue: [] as Track[], index: -1, blockedIndex: -1, playing: false, pending: false,
+  collectionOperations: [] as { id: string; kind: 'play' | 'add'; collectionId: string }[],
+  get requesting() { return this.collectionOperations.length > 0; }, randomRequesting: false, requestRevision: 0, suspended: false, error: '',
   time: 0, duration: 0, order: 'normal' as Order, queueOpen: false, queueTab: 'queue' as 'queue' | 'history', shortcutsOpen: false, topHidden: false, visOpen: false,
   loadingCollectionId: '', volume: 100,
   view: '' as '' | 'share' | 'settings', viewFrom: 'bottom' as 'bottom' | 'right',
   get song() { return this.queue[this.index] as Track | undefined; },
 });
 
-const audio = new Audio(), warmAudio = new Audio();
-const savedVolume = Number(localStorage.getItem('music.volume') ?? 100);
+let audio: HTMLAudioElement, warmAudio: HTMLAudioElement;
+let playbackListeners: AbortController | undefined;
+const savedVolume = Number(readPreference('music.volume', '100'));
 player.volume = Number.isFinite(savedVolume) ? Math.max(0, Math.min(100, savedVolume)) : 100;
-audio.volume = player.volume / 100;
-audio.crossOrigin = warmAudio.crossOrigin = 'anonymous';
-audio.preload = 'auto'; warmAudio.preload = 'metadata';
+export function beginCollectionOperation(kind: 'play' | 'add', collectionId: string) {
+  if (kind === 'play') cancelPlayOperations();
+  const id = crypto.randomUUID();
+  player.collectionOperations.push({ id, kind, collectionId });
+  return {
+    id,
+    fail(error: unknown) { if (player.collectionOperations.some(op => op.id === id)) player.error = error instanceof Error ? error.message : String(error); },
+    finish() { player.collectionOperations = player.collectionOperations.filter(op => op.id !== id); },
+  };
+}
+function cancelPlayOperations(except?: string) { player.collectionOperations = player.collectionOperations.filter(op => op.kind !== 'play' || op.id === except); }
+const queueEntry = (track: Track): Track => ({ ...track, queueEntryId: crypto.randomUUID() });
 let localTrack: Track | undefined, scrobbled = false;
 let intent = 0, perm: Uint32Array = new Uint32Array(0), cursor = -1;
 let randomGrid: Grid | undefined, randomDraw = 0;
@@ -36,9 +49,9 @@ function remember(index: number) {
   recordHistory(historyContext, index, cursor);
 }
 
-function clearWarm() { warmAudio.removeAttribute('src'); warmAudio.load(); }
+function clearWarm() { if (!warmAudio) return; warmAudio.removeAttribute('src'); warmAudio.load(); }
 const localAdapter: PlaybackAdapter = {
-  available(track) { if (track.source !== 'local') throw new Error('This build plays local music only.'); if (!session.api || !track.available) throw new Error('Local track unavailable. Check your music library.'); },
+  available(track) { initPlayback(); if (track.source !== 'local') throw new Error('This build plays local music only.'); if (!session.api || !track.available) throw new Error('Local track unavailable. Check your music library.'); },
   async prepare(track) { graph?.ctx.resume(); if (audio.src !== streamUrl(track.rawId)) { audio.src = streamUrl(track.rawId); audio.load(); } },
   async start(track) { localTrack = track; scrobbled = false; audio.currentTime = 0; await audio.play(); session.api?.scrobble({ id: track.rawId, submission: false }).catch(() => {}); },
   async pause() { audio.pause(); },
@@ -60,8 +73,8 @@ function metadata(track: Track) {
 export function setVolume(value: number) {
   if (!Number.isFinite(value)) return;
   player.volume = Math.max(0, Math.min(100, Math.round(value)));
-  audio.volume = player.volume / 100;
-  try { localStorage.setItem('music.volume', String(player.volume)); } catch {}
+  if (audio) audio.volume = player.volume / 100;
+  writePreference('music.volume', String(player.volume));
 }
 export function collectionPlayback(collection: Pick<Collection, 'id'>) {
   const current = (player.song?.playbackOrigin?.id || player.song?.albumId) === collection.id;
@@ -74,6 +87,7 @@ export function collectionTrackIsCurrent(collection: Pick<Collection, 'id'>, tra
   return current.playbackOriginIndex === undefined ? tracks.filter(song => song.id === track.id).length === 1 : current.playbackOriginIndex === index;
 }
 function prepareNext() {
+  if (!playbackListeners) return;
   const i = player.order === 'shuffle' ? perm[cursor + 1] : player.index + 1;
   const track = player.queue[i];
   if (track?.source === 'local') warmAudio.src = streamUrl(track.rawId);
@@ -107,12 +121,13 @@ async function start(index: number) {
 function rebuildShuffle() {
   if (player.order === 'shuffle') { perm = shuffle(player.queue.length, player.index); cursor = 0; }
 }
-export function play(queue: Track[], index = 0) {
+export function play(queue: Track[], index = 0, operationId?: string) {
   if (blocked(queue[Math.max(0, index)])) return -1;
-  player.requestRevision++;
+  player.requestRevision++; cancelPlayOperations(operationId);
+  if (!operationId) player.loadingCollectionId = '';
   queueVersion++; freshHistoryContext();
   cancelRandomLookup(); randomGrid = undefined;
-  player.queue = queue.map((t) => ({ ...t })); player.index = Math.max(0, index);
+  player.queue = queue.map(queueEntry); player.index = Math.max(0, index);
   if (player.order === 'random') player.order = 'normal';
   rebuildShuffle();
   if (player.queue.length) void start(player.order === 'shuffle' ? perm[0] : player.index);
@@ -121,12 +136,14 @@ export function play(queue: Track[], index = 0) {
 export function appendToSession(tracks: Track[], version: number) {
   if (version !== queueVersion) return false;
   const offset = player.queue.length;
-  player.queue.push(...tracks.map((t) => ({ ...t })));
-  if (historyContext) historyContext.queue.push(...tracks.map(t => ({ ...t })));
+  const entries = tracks.map(queueEntry);
+  player.queue.push(...entries);
+  if (historyContext) historyContext.queue.push(...entries.map(t => ({ ...t })));
   if (player.order === 'shuffle') perm = Uint32Array.from([...perm, ...Array.from(shuffle(tracks.length), (i) => i + offset)]);
   if (historyContext) { historyContext.permutation = [...perm]; saveHistory(historyContext); }
   prepareNext(); return true;
 }
+export const queueSession = () => queueVersion;
 export function enqueue(tracks: Track[]) {
   if (player.order === 'random') { randomGrid = undefined; cancelRandomLookup(); player.order = 'normal'; }
   appendToSession(tracks, queueVersion); player.queueOpen = true;
@@ -178,7 +195,7 @@ async function nextRandom() {
     if (!track) throw new Error('This collection has no playable music tracks. Skip to continue.');
     if (blocked(track)) { cursor--; return; }
     freshHistoryContext();
-    player.queue.push({ ...track }); void start(player.queue.length - 1);
+    player.queue.push(queueEntry(track)); void start(player.queue.length - 1);
   } catch (error) { if (mine === randomDraw) fail(error); }
   finally { if (mine === randomDraw) player.randomRequesting = false; }
 }
@@ -205,21 +222,21 @@ export function replayHistory(entry: HistoryEntry) {
   player.queueTab = 'queue';
 }
 export function jump(index: number) {
-  player.requestRevision++;
+  player.requestRevision++; cancelPlayOperations(); player.loadingCollectionId = '';
   cancelRandomLookup();
   if (blocked(player.queue[index])) return;
   if (player.order === 'shuffle') { freshHistoryContext(); player.index = index; rebuildShuffle(); }
   void start(index);
 }
 export function next() {
-  player.requestRevision++;
+  player.requestRevision++; cancelPlayOperations(); player.loadingCollectionId = '';
   if (player.order === 'random') return void nextRandom();
   const index = player.order === 'shuffle' ? perm[cursor + 1] : (player.blockedIndex >= 0 ? player.blockedIndex : player.index) + 1;
   if (index < player.queue.length) { if (blocked(player.queue[index])) { player.blockedIndex = index; if (player.order === 'shuffle') cursor++; return; } if (player.order === 'shuffle') cursor++; void start(index); }
   else { void pause(); player.time = player.duration; }
 }
 export function prev() {
-  player.requestRevision++;
+  player.requestRevision++; cancelPlayOperations(); player.loadingCollectionId = '';
   cancelRandomLookup();
   if (player.time > 3) return seek(0);
   if (player.order === 'shuffle') { if (cursor > 0 && !blocked(player.queue[perm[cursor - 1]])) void start(perm[--cursor]); }
@@ -229,7 +246,7 @@ export async function pause() {
   player.requestRevision++;
   player.loadingCollectionId = '';
 
-  const mine = ++intent; cancelRandomLookup(); player.requesting = false; player.pending = true;
+  const mine = ++intent; cancelRandomLookup(); cancelPlayOperations(); player.pending = true;
   try { await controller.pause(); if (mine === intent) { playing(false); player.pending = false; } }
   catch (error) { if (mine === intent) fail(error); }
 }
@@ -244,7 +261,7 @@ export async function toggle() {
   try { await controller.resume(); if (mine === intent) { player.pending = false; player.error = ''; playing(true);  } }
   catch (error) { if (mine === intent) fail(error); }
 }
-export function cancelCollectionLoading() { player.requestRevision++; player.requesting = false; player.loadingCollectionId = ''; }
+export function cancelCollectionLoading() { player.requestRevision++; cancelPlayOperations(); player.loadingCollectionId = ''; }
 export async function seek(fraction: number) {
   if (!player.duration || player.pending || !Number.isFinite(fraction)) return;
   const seconds = Math.max(0, Math.min(1, fraction)) * player.duration;
@@ -254,22 +271,44 @@ export async function seek(fraction: number) {
   try { await controller.seek(seconds); } catch (error) { if (mine === intent) fail(error); }
 }
 
-audio.addEventListener('timeupdate', () => {
+export function initPlayback() {
+  if (playbackListeners) return;
+  audio = new Audio(); warmAudio = new Audio();
+  audio.volume = player.volume / 100;
+  audio.crossOrigin = warmAudio.crossOrigin = 'anonymous';
+  audio.preload = 'auto'; warmAudio.preload = 'metadata';
+  playbackListeners = new AbortController();
+  const listen = (name: string, listener: EventListener) => audio.addEventListener(name, listener, { signal: playbackListeners!.signal });
+listen('timeupdate', () => {
   if (controller.active !== 'local' || player.pending || player.song?.id !== localTrack?.id) return;
   player.time = audio.currentTime; player.duration = audio.duration || localTrack?.duration || 0;
   if (!scrobbled && localTrack && (player.time > player.duration / 2 || player.time > 240)) {
     scrobbled = true; session.api?.scrobble({ id: localTrack.rawId, submission: true }).catch(() => {});
   }
 });
-audio.addEventListener('ended', () => { if (controller.active === 'local' && !player.pending) { playing(false); next(); } });
-audio.addEventListener('error', () => { if (controller.active === 'local') fail(new Error('Local audio could not be loaded. Check the file and retry or skip.')); });
-audio.addEventListener('pause', () => { if (controller.active === 'local' && !player.pending) playing(false); });
-audio.addEventListener('play', () => { if (controller.active === 'local' && !player.pending) playing(true); });
+listen('ended', () => { if (controller.active === 'local' && !player.pending) { playing(false); next(); } });
+listen('error', () => { if (controller.active === 'local') fail(new Error('Local audio could not be loaded. Check the file and retry or skip.')); });
+listen('pause', () => { if (controller.active === 'local' && !player.pending) playing(false); });
+listen('play', () => { if (controller.active === 'local' && !player.pending) playing(true); });
 
-export function disposePlayback() { audio.pause(); clearWarm(); }
+  initMediaSession();
+}
+export function disposePlayback() {
+  intent++; queueVersion++; player.requestRevision++; cancelRandomLookup(); cancelPlayOperations();
+  controller.release(); playbackListeners?.abort(); playbackListeners = undefined;
+  if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+  clearWarm(); localTrack = undefined;
+  void graph?.ctx.close().catch(() => {}); graph = null;
+  player.pending = false; player.playing = false;
+  if ('mediaSession' in navigator) {
+    for (const action of ['play', 'pause', 'nexttrack', 'previoustrack', 'seekto'] as const) navigator.mediaSession.setActionHandler(action, null);
+    navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none';
+  }
+}
 
 let graph: { ctx: AudioContext; node: GainNode; localAnalysis: GainNode } | null = null;
 export function audioGraph() {
+  initPlayback();
   if (!graph) {
     const ctx = new AudioContext(), node = ctx.createGain();
     const local = ctx.createMediaElementSource(audio), silent = ctx.createGain(), localAnalysis = ctx.createGain();
@@ -279,10 +318,13 @@ export function audioGraph() {
   }
   graph.ctx.resume(); return graph;
 }
-if ('mediaSession' in navigator) {
+function initMediaSession() {
+ if ('mediaSession' in navigator) {
   const ms = navigator.mediaSession;
   ms.setActionHandler('play', () => { if (!player.playing) void toggle(); });
   ms.setActionHandler('pause', () => void pause());
   ms.setActionHandler('nexttrack', next); ms.setActionHandler('previoustrack', prev);
   ms.setActionHandler('seekto', (d) => { if (d.seekTime != null) void seek(d.seekTime / player.duration); });
+}
+
 }

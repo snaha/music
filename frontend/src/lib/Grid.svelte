@@ -1,6 +1,9 @@
 <script lang="ts">
   import { keyboardScope } from './keyboard';
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
+  import { createBrowseView } from './browse-view.svelte';
+  import { registerBrowseSource } from './browse-source';
+  import { readPreference, writePreference } from './preferences';
   import Icon from './ui/icon.svelte';
   import Button from './ui/button.svelte';
   import Slider from './ui/slider.svelte';
@@ -26,13 +29,17 @@
   let { tiles, onpick, activeId, hidden }: { tiles: Tile[]; onpick: (t: Tile) => void; activeId?: string; hidden: boolean } = $props();
 
   // Cover wall from Figma Current: quiet chrome, square artwork, separate open and play controls.
-  let cols = $state(Number(localStorage.getItem('grid.cols')) || 6);
+  function savedNumber(key: string, fallback: number, min: number, max: number) {
+    const value = Number(readPreference(key, String(fallback)));
+    return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : fallback;
+  }
+  let cols = $state(savedNumber('grid.cols', 6, 1, 10));
   let advancedLayout = $state(false);
   function resizeGrid(value: number) { cols = 11 - value; gap = Math.round(24 + cols * 8); }
-  let gap = $state(Number(localStorage.getItem('grid.gap') ?? 48));
+  let gap = $state(savedNumber('grid.gap', 48, 0, 160));
   // The former `art` preference filtered out albums without covers; it did not hide images.
-  let art = $state(localStorage.getItem('artwork.visible') !== '0');
-  let motion = $state(localStorage.getItem('motion') === '1'); // off by default
+  let art = $state(readPreference('artwork.visible') !== '0');
+  let motion = $state(readPreference('motion') === '1'); // off by default
   type BarMode = 'library' | 'filters' | 'layout' | 'look' | 'theme';
   function closeModes() {
     if (document.activeElement?.matches(':focus-visible')) document.querySelector<HTMLButtonElement>('[aria-label="Choose toolbar mode"]')?.focus();
@@ -41,31 +48,30 @@
   function showMode(mode: BarMode) { toolbar.mode = mode; player.view = ''; closeModes(); }
   function backToSelector() { player.view = ''; toolbar.selecting = true; requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.mode-options button[aria-pressed=true]')?.focus()); }
   $effect(() => {
-    localStorage.setItem('grid.cols', String(cols)); localStorage.setItem('grid.gap', String(gap));
-    localStorage.setItem('artwork.visible', art ? '1' : '0'); localStorage.setItem('motion', motion ? '1' : '0');
-    localStorage.setItem('library.source', library.source);
+    writePreference('grid.cols', String(cols)); writePreference('grid.gap', String(gap));
+    writePreference('artwork.visible', art ? '1' : '0'); writePreference('motion', motion ? '1' : '0');
+    writePreference('library.source', library.source);
   });
   let query = $state('');
   let searchKind = $state('all');
   const searching = $derived(!!query.trim());
   const searchAccount = $derived(JSON.stringify([session.base, session.username]));
-  const scanCount = $derived(library.scan.count);
+  const catalogRevision = $derived(library.revision);
   $effect(() => {
     const term = query.trim().slice(0, 500), source = library.source;
-    session.api; searchAccount; scanCount;
+    session.api; searchAccount; catalogRevision;
     return untrack(() => startCatalogSearch(term, source));
   });
   let artistFilter = $state('');
   let sort = $state('title'), sortDirection = $state(1), sortRevision = $state(0), randomSeed = $state(Math.random());
-  let showFilter = $state('all'), collectionMode = $state<string>(library.mode);
-  let colorOrder = $state<Record<string, number>>({});
-  $effect(() => { collectionMode = library.mode; });
+  let showFilter = $state('all');
+  let collectionMode = $derived<string>(library.mode);
+  let colorOrder = $state.raw<Record<string, number>>({});
   $effect(() => { const tiles = sourceTiles; if (sort === 'color') untrack(() => warmColors(tiles)); });
   function applySort() { colorOrder = Object.fromEntries(sourceTiles.map(tile => [tile.id, catalog.colors[tile.id]?.hue ?? 361])); sortRevision++; filterChanged(); }
   function sortChanged() { if (sort === 'random') randomSeed = Math.random(); applySort(); }
-  function randomOrder(id: string) { let hash = Math.floor(randomSeed * 2147483647); for (const char of id) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619); return hash >>> 0; }
   let favoritesOnly = $state(false);
-  let details = $state<Tile | null>(null);
+  let details = $state.raw<Tile | null>(null);
   $effect(() => { if (player.queueOpen || player.visOpen || player.view === 'share') details = null; });
   const currentDetails = $derived.by(() => { const selected = details; return selected ? library.tiles.find(tile => tile.id === selected.id) || selected : null; });
   const filtersOpen = $derived(toolbar.mode === 'filters');
@@ -82,43 +88,26 @@
   let filterHeight = $state(110);
   $effect(() => { const mode = library.mode; untrack(() => { artistFilter = ''; if (mode === 'playlists' && sort === 'recent') sort = 'library'; }); });
   const modeLabels: Record<Mode, string> = { albums: 'Albums', playlists: 'Playlists' };
-  const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
   const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
   const sourceTiles = $derived(tiles.filter((t) => library.source === 'all' || t.source === library.source));
   const genres = $derived([...new Set(sourceTiles.flatMap(tile => metadata(tile).genres))].sort(collator.compare));
   const tagged = $derived(sourceTiles.filter(tile => !!catalog.items[tile.id]?.traits).length);
   const colorsReady = $derived(sourceTiles.filter(tile => tile.cover && catalog.colors[tile.id]?.colorReady && catalog.colors[tile.id]?.colorRevision === coverRevision(tile)).length);
   const artists = $derived([...new Set(sourceTiles.filter((t) => t.kind === 'album').map((t) => t.sub).filter(Boolean))].sort(collator.compare));
-  let orderKey = '', tileOrder: string[] = [];
-  let shown = $derived.by(() => {
-    const words = normalize(query).trim().split(/\s+/).filter(Boolean);
-    const result = sourceTiles.filter((t) => (!favoritesOnly || metadata(t).favorite) && (!artistFilter || t.sub === artistFilter) &&
-      (showFilter !== 'favorites' || metadata(t).favorite) && (!showFilter.startsWith('genre:') || metadata(t).genres.includes(showFilter.slice(6))) &&
-      (showFilter !== 'mood' || !!catalog.items[t.id]?.traits) && digScore(t) > 0 && words.every((word) => normalize(`${t.title} ${t.sub} ${metadata(t).genres.join(' ')}`).includes(word)));
-    if (sort === 'recent') result.sort((a, b) => (b.addedAt ?? '').localeCompare(a.addedAt ?? ''));
-    if (sort === 'title') result.sort((a, b) => collator.compare(a.title, b.title));
-    if (sort === 'artist') result.sort((a, b) => collator.compare(a.sub, b.sub) || collator.compare(a.title, b.title));
-    if (sort === 'year') result.sort((a, b) => (metadata(a).year ?? 10000) - (metadata(b).year ?? 10000) || collator.compare(a.title, b.title));
-    if (sort === 'plays') result.sort((a, b) => (catalog.stats[b.id]?.plays || 0) - (catalog.stats[a.id]?.plays || 0) || collator.compare(a.title, b.title));
-    if (sort === 'color') result.sort((a, b) => (colorOrder[a.id] ?? 361) - (colorOrder[b.id] ?? 361) || collator.compare(a.title, b.title));
-    if (sort === 'random') result.sort((a, b) => randomOrder(a.id) - randomOrder(b.id));
-    if (sortDirection === -1 && sort !== 'random') result.reverse();
-    if (digActive()) result.sort((a, b) => digScore(b) - digScore(a));
-    // Background discovery replaces existing covers in place; new matches append until the next explicit filter/sort.
-    const key = JSON.stringify([library.mode, library.source, query, artistFilter, sort, sortDirection, sortRevision, randomSeed, showFilter, favoritesOnly, dig.moodOn, dig.mood, dig.energy, dig.familiarity, dig.acoustic, dig.vocal]);
-    if (key !== orderKey) { orderKey = key; tileOrder = result.map(t => t.id); }
-    else {
-      const known = new Set(tileOrder), matches = new Map(result.map(t => [t.id, t]));
-      tileOrder = [...tileOrder.filter(id => matches.has(id)), ...result.filter(t => !known.has(t.id)).map(t => t.id)];
-      return tileOrder.map(id => matches.get(id)!);
-    }
-    return result;
-  });
+  const view = createBrowseView(() => ({
+    tiles, source: library.source, query, artist: artistFilter, show: showFilter, favoritesOnly,
+    sort, direction: sortDirection, randomSeed, colorOrder, digActive: digActive(),
+    metadata, score: digScore, tagged: tile => !!catalog.items[tile.id]?.traits,
+    plays: id => catalog.stats[id]?.plays || 0,
+    key: JSON.stringify([library.mode, library.source, query, artistFilter, sort, sortDirection, sortRevision,
+      randomSeed, showFilter, favoritesOnly, dig.moodOn, dig.mood, dig.energy, dig.familiarity, dig.acoustic, dig.vocal]),
+  }));
+  const shown = $derived(view.collections);
+  onMount(() => registerBrowseSource(() => searching ? catalogSearch.collections : view.collections));
   function filterChanged() { scrollTop = 0; details = null; player.queueOpen = false; player.view = ''; scroller?.scrollTo({ top: 0 }); }
   function changeMode(mode: Mode) { artistFilter = ''; favoritesOnly = false; filterChanged(); void setMode(mode); }
   function changeSource() { artistFilter = ''; filterChanged(); }
   function resetFilters() { query = ''; artistFilter = ''; library.source = 'all'; sort = 'title'; sortDirection = 1; showFilter = 'all'; favoritesOnly = false; resetDig(); filterChanged(); }
-  $effect(() => { library.visible = searching ? catalogSearch.collections : shown; });
 
   let viewportWidth = $state(innerWidth), viewportHeight = $state(innerHeight), scrollTop = $state(0);
   const pixelGap = $derived(Math.max(0.2, gap * (viewportWidth + (innerWidth - viewportWidth)) / 3312));
@@ -203,7 +192,7 @@
     <div class="bar-modes" class:expanded={toolbar.selecting}>
       <button class="icon-button" aria-label="Choose toolbar mode" aria-expanded={toolbar.selecting} aria-controls="toolbar-mode-options" title="Display options" onclick={() => (toolbar.selecting = !toolbar.selecting)}><Icon name="filter" /></button>
       <div class="mode-options" id="toolbar-mode-options" use:keyboardScope={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeModes(); } }} inert={!toolbar.selecting}>
-        {#each [['library', 'Library'], ['filters', 'Filters'], ['layout', 'Layout'], ['look', 'Background'], ['theme', 'Theme']] as [mode, label]}
+        {#each [['library', 'Library'], ['filters', 'Filters'], ['layout', 'Layout'], ['look', 'Background'], ['theme', 'Theme']] as [mode, label] (mode)}
           <button aria-label={label === 'Filters' ? 'Library filters' : label} aria-pressed={toolbar.mode === mode} onclick={() => showMode(mode as BarMode)}>{label}</button>
         {/each}
       </div>
@@ -226,7 +215,7 @@
         <Button variant="outline" size="sm" aria-pressed={advancedLayout} onclick={() => (advancedLayout = !advancedLayout)}>{advancedLayout ? 'Simple' : 'Advanced'}</Button>
       </div>
     {:else if toolbar.mode === 'look'}
-      <div class="controls"><span class="group" role="radiogroup" aria-label="Background">{#each Object.entries(MATERIALS) as [key, label]}<button class="opt" class:on={bg.material === key} role="radio" aria-checked={bg.material === key} disabled={key === 'custom' && !bg.custom} onclick={() => (bg.material = key as keyof typeof MATERIALS)}>{label}</button>{/each}<button class="opt" onclick={randomBackground}>Random</button></span></div>
+      <div class="controls"><span class="group" role="radiogroup" aria-label="Background">{#each Object.entries(MATERIALS) as [key, label] (key)}<button class="opt" class:on={bg.material === key} role="radio" aria-checked={bg.material === key} disabled={key === 'custom' && !bg.custom} onclick={() => (bg.material = key as keyof typeof MATERIALS)}>{label}</button>{/each}<button class="opt" onclick={randomBackground}>Random</button></span></div>
     {:else if toolbar.mode === 'theme'}<ComponentStyles />{/if}
     </div>
   {/if}
@@ -286,7 +275,7 @@
       <button onclick={chooseMusicFolder}>Add music folder</button>
     {:else if window.desktop && desktop.status?.musicFolder && !library.tiles.length && library.mode === 'albums'}
       <p>{library.scan.error || library.error ? 'Your music folder could not be loaded.' : !library.scan.checked ? 'Checking your music folder…' : library.scan.scanning ? 'Your collection is being indexed. Albums will appear here as they’re found.' : 'No music was found in this folder.'}</p>
-      {#each desktop.status.musicFolders as folder}<p style:overflow-wrap="anywhere">{folder}</p>{/each}
+      {#each desktop.status.musicFolders as folder (folder)}<p style:overflow-wrap="anywhere">{folder}</p>{/each}
       <button onclick={chooseMusicFolder}>Add music folder</button>
     {:else}
       <p>{library.scan.scanning ? 'Your collection is being indexed. Albums will appear here as they’re found.' : 'No music matches this view.'}</p>

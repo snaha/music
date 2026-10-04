@@ -1,9 +1,10 @@
+import { HISTORY_SCHEMA_VERSION, isListeningContext } from '../../../shared/contracts';
+import { readJsonPreference, writePreference } from './preferences';
 import { coverUrl, session } from './api.svelte';
 import type { Collection, Track } from './music';
 
-export type PlaybackOrigin = Pick<Collection, 'id' | 'rawId' | 'source' | 'kind' | 'title' | 'cover'>;
-export type ListeningContext = { id: string; queue: Track[]; origin?: PlaybackOrigin; order: 'normal' | 'shuffle' | 'random'; permutation: number[] };
-export type HistoryEntry = { id: string; context: ListeningContext; index: number; cursor: number; playedAt: number };
+import type { PlaybackOrigin, ListeningContext, HistoryEntry } from '../../../shared/contracts';
+export type { PlaybackOrigin, ListeningContext, HistoryEntry } from '../../../shared/contracts';
 export type ListeningStats = Record<string, { plays: number; lastPlayed: number }>;
 const browserStats = $state({ values: {} as ListeningStats });
 export const listeningHistory = $state({ persistedRevision: 0, entries: [] as HistoryEntry[], total: 0, hasMore: false, loading: false, query: '', error: '' });
@@ -34,9 +35,9 @@ export function loadHistory() {
   account = next; listeningHistory.entries = []; listeningHistory.query = ''; listeningHistory.total = 0; listeningHistory.hasMore = false; listeningHistory.error = '';
   queryRevision++;
   try {
-    const data = JSON.parse(localStorage.getItem(account) || 'null');
+    const data = readJsonPreference<{ contexts?: unknown; entries?: unknown; stats?: unknown } | null>(account, null);
     if (!data || !Array.isArray(data.contexts) || !Array.isArray(data.entries)) throw new Error('No legacy history');
-    const contexts = new Map<string, ListeningContext>(data.contexts.filter((c: ListeningContext) => c && typeof c.id === 'string' && Array.isArray(c.queue) && c.queue.every(t => t && typeof t.id === 'string' && typeof t.rawId === 'string' && typeof t.title === 'string' && t.source === 'local') && ['normal', 'shuffle', 'random'].includes(c.order) && Array.isArray(c.permutation)).map((c: ListeningContext) => [c.id, c]));
+    const contexts = new Map<string, ListeningContext>(data.contexts.filter((c: ListeningContext) => isListeningContext(c)).map((c: ListeningContext) => [c.id, c]));
     listeningHistory.entries = data.entries.flatMap((e: HistoryEntry & { contextId: string }) => {
       const context = contexts.get(e.contextId);
       return context && Number.isInteger(e.index) && context.queue[e.index] && typeof e.id === 'string' && Number.isFinite(e.playedAt) && e.playedAt > 0 && e.playedAt <= 8640000000000000 ? [{ id: e.id, context, index: e.index, cursor: Number.isInteger(e.cursor) ? e.cursor : 0, playedAt: e.playedAt }] : [];
@@ -58,7 +59,7 @@ function snapshot(entries = listeningHistory.entries, changedContext?: Listening
   const contexts = new Map(entries.map(e => [e.context.id, e.context]));
   if (onlyNew) for (const id of contexts.keys()) if (queuedContexts.get(scope())?.has(id)) contexts.delete(id);
   if (changedContext) contexts.set(changedContext.id, changedContext);
-  return $state.snapshot({ scope: scope(), contexts: [...contexts.values()].map(c => ({ ...c, origin: c.origin ? { ...c.origin, cover: c.origin.source === 'local' ? '' : c.origin.cover } : undefined, queue: c.queue.map(storedTrack) })), entries: entries.map(({ context, ...e }) => ({ ...e, contextId: context.id })) });
+  return $state.snapshot({ version: HISTORY_SCHEMA_VERSION, scope: scope(), contexts: [...contexts.values()].map(c => ({ ...c, origin: c.origin ? { ...c.origin, cover: c.origin.source === 'local' ? '' : c.origin.cover } : undefined, queue: c.queue.map(storedTrack) })), entries: entries.map(({ context, ...e }) => ({ ...e, contextId: context.id })) });
 }
 function enqueue(task: () => Promise<unknown>) {
   const activeAccount = account;
@@ -80,13 +81,13 @@ function persist(entries = listeningHistory.entries, changedContext?: ListeningC
       if (!pending.length) return;
       const contexts = new Map(pending.flatMap(item => item.contexts).map(context => [context.id, context]));
       const entries = new Map(pending.flatMap(item => item.entries).map(entry => [entry.id, entry]));
-      await bridge.write({ scope: batch.scope, contexts: [...contexts.values()], entries: [...entries.values()] });
+      await bridge.write({ version: HISTORY_SCHEMA_VERSION, scope: batch.scope, contexts: [...contexts.values()], entries: [...entries.values()] });
       unsaved.set(batch.scope, (unsaved.get(batch.scope) || []).filter(item => !pending.includes(item)));
       if (batch.scope === scope()) listeningHistory.persistedRevision++;
     });
   }
-  try { localStorage.setItem(account, JSON.stringify({ ...batch, stats: $state.snapshot(browserStats.values) })); listeningHistory.persistedRevision++; }
-  catch { listeningHistory.error = 'Browser storage is full. Your current session is still available.'; }
+  if (writePreference(account, JSON.stringify({ ...batch, stats: $state.snapshot(browserStats.values) }))) { listeningHistory.persistedRevision++; listeningHistory.error = ''; }
+  else listeningHistory.error = 'Browser storage is full. Your current session is still available.';
 }
 export async function searchHistory(query = listeningHistory.query, more = false) {
   loadHistory();
@@ -101,6 +102,7 @@ export async function searchHistory(query = listeningHistory.query, more = false
   try {
     const result = await enqueue(async () => { if (revision !== queryRevision || activeAccount !== account) return; if (pendingClears.has(activeScope) || unsaved.get(activeScope)?.length) throw new Error('Unsaved listening events'); return bridge.list({ scope: activeScope, query, offset }); }) as { entries: HistoryEntry[]; total: number; hasMore: boolean };
     if (!result || revision !== queryRevision || activeAccount !== account) return;
+    if (!Array.isArray(result.entries) || !result.entries.every(entry => isListeningContext(entry.context) && Number.isInteger(entry.index) && !!entry.context.queue[entry.index]) || !Number.isInteger(result.total) || result.total < 0) throw new Error('Invalid history response');
     const contexts = new Map(listeningHistory.entries.map(e => [e.context.id, e.context]));
     const entries = result.entries.map(e => ({ ...e, context: contexts.get(e.context.id) || e.context }));
     listeningHistory.entries = more ? [...listeningHistory.entries, ...entries.filter(e => !listeningHistory.entries.some(old => old.id === e.id))] : entries;
@@ -170,3 +172,5 @@ export async function historyStats(): Promise<ListeningStats | undefined> {
   }
   return stats;
 }
+
+export function disposeHistory() { clearTimeout(persistenceTimer); queryRevision++; if (account) void persist(); }

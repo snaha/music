@@ -1,3 +1,4 @@
+import { validateDesktopRequest, validateHistoryRequest } from '../shared/contracts.js';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session as electronSession, shell } from 'electron';
 import { MusicDatabase } from './music-database.js';
 import { spawn } from 'node:child_process';
@@ -130,6 +131,7 @@ app.whenReady().then(async () => {
   phase = config.setupComplete ? 'starting' : 'setup';
   for (const method of ['write', 'list', 'clear', 'stats']) ipcMain.handle(`music-history:${method}`, async (event, args) => {
     trusted(event);
+    validateHistoryRequest(method, args);
     if (!musicDatabase) throw new Error('Your library is still starting.');
     return musicDatabase.call(method, args);
   });
@@ -166,7 +168,7 @@ app.whenReady().then(async () => {
   // the old window closes only once the new one shows, so the app never has no window (which would quit it)
   const handleDesktop = (name, fn) => ipcMain.handle(`desktop:${name}`, async (event, ...args) => {
     trusted(event);
-    try { return { value: await fn(event, ...args) }; }
+    try { validateDesktopRequest(name, args); return { value: await fn(event, ...args) }; }
     catch (error) { return { error: error.message }; }
   });
   handleDesktop('status', () => desktopStatus());

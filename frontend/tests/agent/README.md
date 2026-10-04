@@ -1,9 +1,9 @@
 # Agent-driven Music regressions
 
 Use Codex computer/browser controls or the installed `agent-browser` CLI. There
-is no Playwright test dependency or Cypress dependency in this workflow. The CLI
-may use browser-automation libraries internally; this project does not maintain
-Playwright specs.
+are no maintained Playwright application specs or Cypress tests in this workflow.
+Separate Vitest component tests use a Playwright browser provider; the application
+journey below remains agent-driven.
 
 ## Start the isolated fixture
 
@@ -72,3 +72,11 @@ mixed-provider runs do not establish a pass for core. Screenshots remain evidenc
 not approved replacement references.
 
 Official agent-browser command reference: https://agent-browser.dev/commands
+
+## Svelte component regressions
+
+`pnpm --dir frontend test:unit` uses Vitest Browser Mode through the production
+Svelte/Vite plugin for catalog generations, operation ownership, duplicate queue
+identity/focus, browser capability fallbacks, revisions, storage and runtime teardown.
+Its Playwright browser provider supplies Chromium; it does not replace this
+agent-driven application audit with Playwright end-to-end specifications.

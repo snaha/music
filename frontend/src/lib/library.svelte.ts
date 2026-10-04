@@ -1,21 +1,25 @@
-import type { AlbumID3, Child, Playlist, ScanStatus } from 'subsonic-api';
-import { coverUrl, ok, session } from './api.svelte';
-import { appendToSession, enqueue, play, player, type Grid } from './player.svelte';
-import { localId, type Collection, type Track } from './music';
+import type { ScanStatus } from 'subsonic-api';
+import { ok, session } from './api.svelte';
+import { appendToSession, enqueue, play, player, beginCollectionOperation, queueSession, type Grid } from './player.svelte';
+import { type Collection, type Track } from './music';
+import { album, playlist, localTrack, localCatalog } from './local-catalog';
+export { album, playlist, localTrack } from './local-catalog';
+import { browseCollections } from './browse-source';
 
 export type Tile = Collection;
 export const MODES = ['albums', 'playlists'] as const;
 export type Mode = (typeof MODES)[number];
-export const library = $state({ mode: 'albums' as Mode, tiles: [] as Tile[], visible: [] as Tile[], loading: false,
-  error: '', source: 'all' as 'all' | 'local',
-  scan: { scanning: false, count: 0, checked: false, error: '' } });
+class LibraryState {
+  mode = $state<Mode>('albums');
+  tiles = $state.raw<Tile[]>([]);
+  revision = $state(0);
+  loading = $state(false);
+  error = $state('');
+  source = $state<'all' | 'local'>('all');
+  scan = $state({ scanning: false, count: 0, checked: false, error: '' });
+}
+export const library = new LibraryState();
 let localTiles: Tile[] = [], req = 0, pickRequest = 0, listing = true;
-
-export const album = (a: AlbumID3): Tile => ({ id: localId('album', a.id), rawId: a.id, source: 'local', cover: coverUrl(a.coverArt), title: a.name, sub: a.artist ?? '', kind: 'album', count: a.songCount ?? 1, available: true, addedAt: a.created ? new Date(a.created).toISOString() : undefined, favorite: !!a.starred, year: a.year, genres: a.genre ? [a.genre] : [] });
-export const playlist = (p: Playlist): Tile => ({ id: localId('playlist', p.id), rawId: p.id, source: 'local', cover: coverUrl(p.coverArt ?? `pl-${p.id}`), title: p.name, sub: 'playlist', kind: 'playlist', count: p.songCount ?? 1, available: true });
-export const localTrack = (s: Child): Track => ({ id: localId('track', s.id), rawId: s.id, source: 'local', title: s.title,
-  artist: s.artist, album: s.album, albumId: s.albumId ? localId('album', s.albumId) : undefined,
-  coverId: s.coverArt, cover: coverUrl(s.coverArt, 512), duration: s.duration, track: s.track, disc: s.discNumber, available: true });
 
 function publish(preserve: boolean) {
   const next = localTiles;
@@ -28,13 +32,12 @@ function publish(preserve: boolean) {
 
 async function allAlbums(type: 'alphabeticalByArtist' | 'newest', mine: number, refresh: boolean) {
   const api = session.api!, out: Tile[] = [];
-  for (let offset = 0; ; offset += 500) {
-    const page = ok(await api.getAlbumList2({ type, size: 500, offset })).albumList2.album ?? [];
-    if (mine !== req) return;
-    out.push(...page.map(album));
-    if (!refresh || page.length < 500) { localTiles = out.slice(); publish(true); }
-    if (page.length < 500) return;
+  for await (const page of localCatalog.albums(api, type)) {
+    if (mine !== req || api !== session.api) return;
+    out.push(...page);
+    if (!refresh) { localTiles = out.slice(); publish(true); }
   }
+  if (mine === req && api === session.api) { localTiles = out; publish(true); }
 }
 export async function setMode(mode: Mode, refresh = false) {
   const api = session.api, mine = ++req;
@@ -42,10 +45,12 @@ export async function setMode(mode: Mode, refresh = false) {
   if (!refresh) { localTiles = []; publish(false); }
   try {
     if (!api) return;
-    if (mode === 'albums') { await allAlbums('alphabeticalByArtist', mine, refresh); return; }
-    const result = ok(await api.getPlaylists()).playlists.playlist ?? [];
-    if (mine === req) localTiles = result.map(playlist);
-    if (mine === req) publish(refresh);
+    if (mode === 'albums') await allAlbums('alphabeticalByArtist', mine, refresh);
+    else {
+      const result = await localCatalog.playlists(api);
+      if (mine === req && api === session.api) { localTiles = result; publish(refresh); }
+    }
+    if (mine === req && api === session.api) library.revision++;
   } catch (error) { if (mine === req) library.error = (error as Error).message; }
   finally { if (mine === req) { library.loading = false; warmCovers(); } }
 }
@@ -81,7 +86,7 @@ export function watchScan() {
         error: s.error ? `Music indexing failed: ${s.error}` : '' };
       // A small scan can finish before the first poll, or entirely between polls.
       // Refresh the first snapshot and any completed scan, even without seeing it start.
-      if (!previous || previous.count !== next.count || previous.lastScan !== next.lastScan || (previous.scanning && !next.scanning)) refreshPending = true;
+      if (!previous || previous.count !== next.count || previous.lastScan !== next.lastScan || (previous.scanning && !next.scanning)) { refreshPending = true; library.revision++; }
       previous = next;
       const now = performance.now();
       if (listing && !library.loading && (!next.scanning ? refreshPending : now - lastRefresh >= 5000)) {
@@ -105,25 +110,22 @@ export async function songsOf(t: Tile): Promise<Track[]> {
 export async function* trackPages(t: Tile): AsyncGenerator<Track[]> {
   if (t.indexing) throw new Error('This album is still being indexed. Its included tracks will appear shortly.');
   if (!t.available) throw new Error('This collection has no playable tracks. Check your music folders in Settings.');
-  const api = session.api!;
-  const collectionTrack = (song: Child, index: number): Track => ({ ...localTrack(song), playbackOriginIndex: index });
-  if (t.kind === 'album') { yield (ok(await api.getAlbum({ id: t.rawId })).album.song ?? []).map(collectionTrack); return; }
-  if (t.kind === 'playlist') { yield (ok(await api.getPlaylist({ id: t.rawId })).playlist.entry ?? []).map(collectionTrack); return; }
-  const albums = ok(await api.getArtist({ id: t.rawId })).artist.album ?? [];
-  if (albums.length) yield* trackPages(album(rnd(albums)));
+  const api = session.api; if (!api) throw new Error('Your library is not connected.');
+  yield* localCatalog.tracks(api, t);
 }
 export async function pick(t: Tile) {
-  const mine = ++pickRequest; player.requesting = true; player.loadingCollectionId = t.id; player.error = '';
-  const selection = ++player.requestRevision;
+  const mine = ++pickRequest; player.loadingCollectionId = t.id; player.error = '';
+  const selection = ++player.requestRevision, api = session.api;
+  const operation = beginCollectionOperation('play', t.id);
   try {
     if (t.kind !== 'artist') {
       let version: number | undefined;
       for await (const tracks of trackPages(t)) {
-        if (mine !== pickRequest) return;
+        if (mine !== pickRequest || api !== session.api) return;
         if (!tracks.length) continue;
         if (version === undefined) {
           if (selection !== player.requestRevision) return;
-          version = play(tracks.map(track => ({ ...track, playbackOrigin: t })));
+          version = play(tracks.map(track => ({ ...track, playbackOrigin: t })), 0, operation.id);
           if (version < 0) return;
         }
         else if (!appendToSession(tracks.map(track => ({ ...track, playbackOrigin: t })), version)) return;
@@ -131,32 +133,38 @@ export async function pick(t: Tile) {
       if (version === undefined) throw new Error('This collection contains no music tracks.');
       return;
     }
-    const albums = (ok(await session.api!.getArtist({ id: t.rawId })).artist.album ?? []).map(album);
-    if (mine !== pickRequest) return;
+    if (!api) throw new Error('Your library is not connected.');
+    const albums = await localCatalog.artistAlbums(api, t.rawId);
+    if (mine !== pickRequest || selection !== player.requestRevision || api !== session.api) return;
     req++; listing = false; library.mode = 'albums'; library.tiles = albums;
-  } catch (error) { if (mine === pickRequest && player.loadingCollectionId === t.id) player.error = (error as Error).message; }
-  finally { if (mine === pickRequest) { player.requesting = false; player.loadingCollectionId = ''; } }
+  } catch (error) { if (mine === pickRequest && api === session.api) operation.fail(error); }
+  finally { operation.finish(); if (mine === pickRequest) player.loadingCollectionId = ''; }
 }
 let addTail = Promise.resolve();
 export function addCollection(t: Tile) {
-  player.requesting = true;
+  const version = queueSession(), api = session.api;
+  const operation = beginCollectionOperation('add', t.id);
   addTail = addTail.then(async () => {
-    player.error = ''; let version: number | undefined;
+    let includedTracks = false;
     try {
+      if (version !== queueSession() || api !== session.api) return;
       for await (const tracks of trackPages(t)) {
+        if (version !== queueSession() || api !== session.api) return;
         const included = tracks.filter(track => track.available).map(track => ({ ...track, playbackOrigin: t }));
         if (!included.length) continue;
-        if (version === undefined) version = enqueue(included);
-        else if (!appendToSession(included, version)) return;
+        if (!includedTracks) enqueue(included); else if (!appendToSession(included, version)) return;
+        includedTracks = true;
       }
-      if (version === undefined) throw new Error('This collection contains no music tracks.');
-    } catch (error) { player.error = (error as Error).message; }
-    finally { player.requesting = false; }
+      if (!includedTracks) throw new Error('This collection contains no music tracks.');
+    } catch (error) { if (version === queueSession() && api === session.api) operation.fail(error); }
+    finally { operation.finish(); }
   });
   return addTail;
 }
+export function disposeLibrary() { req++; pickRequest++; warmGen++; }
+
 export function grid(): Grid {
-  const tiles = library.visible.filter((t) => t.available), cum = new Float64Array(tiles.length + 1);
+  const tiles = browseCollections(library.tiles).filter((t) => t.available), cum = new Float64Array(tiles.length + 1);
   tiles.forEach((t, i) => (cum[i + 1] = cum[i] + Math.max(1, t.count)));
   return {
     count: cum[tiles.length], key: tiles.map((t) => t.id).join(),

@@ -7,36 +7,58 @@
   import { listeningHistory, loadHistory, clearHistory, historyTrack, searchHistory, retryHistory } from './listening-history.svelte';
   let historyQuery = $state('');
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
-  onMount(() => () => clearTimeout(searchTimer));
+  let artworkActive = false;
+  onMount(() => { artworkActive = true; return () => { artworkActive = false; clearTimeout(searchTimer); }; });
   const recent = $derived(listeningHistory.entries);
+  const coverUrl = $derived(player.song?.cover || '');
+  let coverImage = $derived({ url: coverUrl, failed: false });
   const playedAt = (time: number) => new Date(time).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   let { onclose, palette, options }: { onclose: () => void; palette: string; options: Snippet } = $props();
   let listElement = $state<HTMLDivElement>(), bodyElement = $state<HTMLDivElement>();
   const tabScroll: Partial<Record<'queue' | 'history', number>> = {};
   async function selectTab(tab: 'queue' | 'history') {
     if (tab === player.queueTab) return;
+    const menu = openActionId ? document.getElementById(openActionId) : null;
+    if (menu) dismissActions(menu, false);
+    openActionId = '';
     const mobile = matchMedia('(max-width: 700px)').matches;
     const scroller = mobile ? bodyElement : listElement;
     const previous = scroller?.scrollTop || 0;
     tabScroll[player.queueTab] = previous;
     player.queueTab = tab; await tick(); scroller?.scrollTo({ top: tabScroll[tab] ?? (mobile ? previous : 0) });
   }
-  function positionActions(event: ToggleEvent) {
-    if (event.newState !== 'open') return;
-    const menu = event.currentTarget as HTMLElement;
-    const trigger = document.querySelector<HTMLElement>(`[popovertarget="${menu.id}"]`);
+  const nativePopovers = typeof HTMLElement.prototype.showPopover === 'function' && typeof HTMLElement.prototype.hidePopover === 'function';
+  let openActionId = $state('');
+  const actionTrigger = (id: string) => document.querySelector<HTMLElement>(`[data-actions-for="${id}"]`);
+  function positionMenu(menu: HTMLElement) {
+    const trigger = actionTrigger(menu.id);
     if (!trigger) return;
     const bounds = trigger.getBoundingClientRect();
     menu.style.left = `${Math.max(8, Math.min(innerWidth - 168, bounds.right - 160))}px`;
     menu.style.top = `${Math.max(8, Math.min(innerHeight - 164, bounds.bottom + 4))}px`;
   }
+  function positionActions(event: ToggleEvent) { if (event.newState === 'open') positionMenu(event.currentTarget as HTMLElement); }
+  function dismissActions(menu: HTMLElement, restoreFocus = true) {
+    if (nativePopovers) menu.hidePopover();
+    if (openActionId === menu.id) openActionId = '';
+    if (restoreFocus) actionTrigger(menu.id)?.focus({ preventScroll: true });
+  }
+  async function toggleFallbackActions(id: string) {
+    if (nativePopovers) return;
+    if (openActionId === id) { openActionId = ''; return; }
+    openActionId = id;
+    await tick();
+    const menu = document.getElementById(id);
+    if (!menu || openActionId !== id) return;
+    positionMenu(menu);
+    menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
+  }
   function closeActions(event: MouseEvent) {
-    const menu = (event.currentTarget as HTMLElement).closest<HTMLElement>('[popover]');
-    menu?.hidePopover();
-    if (menu) document.querySelector<HTMLElement>(`[popovertarget="${menu.id}"]`)?.focus({ preventScroll: true });
+    const menu = (event.currentTarget as HTMLElement).closest<HTMLElement>('[data-queue-actions]');
+    if (menu) dismissActions(menu);
   }
   function actionKeys(event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); const menu = event.currentTarget as HTMLElement; menu.hidePopover(); document.querySelector<HTMLElement>(`[popovertarget="${menu.id}"]`)?.focus({ preventScroll: true }); return; }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismissActions(event.currentTarget as HTMLElement); return; }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault(); event.stopPropagation();
     const items = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
@@ -55,6 +77,11 @@
   });
 </script>
 
+<svelte:window onclick={event => {
+  if (nativePopovers || !openActionId || (event.target instanceof Element && event.target.closest('[data-queue-actions], [data-actions-for]'))) return;
+  const menu = document.getElementById(openActionId);
+  if (menu) dismissActions(menu, false);
+}} />
 
 <ArtworkView id="player-view" className="now-playing" {palette} label="Now playing and queue" bind:listElement bind:bodyElement onkeydown={event => {
   if (event.defaultPrevented) return;
@@ -68,8 +95,8 @@
   if (event.key !== 'Escape') return;
   event.preventDefault(); event.stopPropagation();
   if (player.shortcutsOpen) { player.shortcutsOpen = false; return; }
-  const expanded = document.querySelector<HTMLElement>('#player-view [popover]:popover-open');
-  if (expanded) { expanded.hidePopover(); document.querySelector<HTMLElement>(`[popovertarget="${expanded.id}"]`)?.focus({ preventScroll: true }); }
+  const expanded = openActionId ? document.getElementById(openActionId) : null;
+  if (expanded) dismissActions(expanded);
   else close();
 }}>
   {#snippet header()}
@@ -79,12 +106,19 @@
   {/snippet}
   {#snippet artwork()}
       {#if player.song}
-        {#key player.song.cover}
-          <img class="detail-cover" src={player.song.cover} alt="{player.song.album || player.song.title} cover" />
-        {/key}
+        {#if coverImage.url && !coverImage.failed}
+          {#key coverImage.url}
+            <img class="detail-cover" src={coverImage.url} alt="{player.song.album || player.song.title} cover" onerror={event => {
+              if (!artworkActive) return;
+              if (event.currentTarget.getAttribute('src') === coverImage.url) coverImage = { ...coverImage, failed: true };
+            }} />
+          {/key}
+        {:else}
+          <div class="empty-art detail-cover" role="img" aria-label="Artwork unavailable for {player.song.album || player.song.title}"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2" /></svg></div>
+        {/if}
         <div class="detail-art-meta">{#if player.song.playbackOrigin}<p>From {player.song.playbackOrigin.title}</p>{/if}</div>
       {:else}
-        <div class="empty-art detail-cover"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2" /></svg></div>
+        <div class="empty-art detail-cover" role="img" aria-label="Choose a track to see its artwork"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2" /></svg></div>
 
       {/if}
   {/snippet}
@@ -120,15 +154,19 @@
         {#if listeningHistory.hasMore}<button class="clear-history" disabled={listeningHistory.loading} onclick={() => void searchHistory(historyQuery, true)}>Load older plays</button>{/if}
       {:else}
       {#if !player.queue.length}<p class="empty">Open an album or playlist and choose Add to queue from its menu.</p>{/if}
-      {#each player.queue as song, i (`${i}:${song.id}`)}
+      {#each player.queue as song, i (song.queueEntryId)}
+        {@const actionId = `queue-actions-${song.queueEntryId}`}
         <div class="song" class:current={i === player.index}>
           <button class="select-song" onclick={() => listen(i)} disabled={!song.available} aria-label="{i === player.index && (player.playing || player.pending) ? 'Pause' : 'Play'} {song.title}" aria-current={i === player.index ? 'true' : undefined}>
             <span class="n">{#if i === player.index && player.pending}<span class="pending" aria-label="Connecting playback"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="7" stroke-dasharray="24 20" /></svg></span>{:else if i === player.index && player.playing && !player.suspended}<Icon name="listening" />{:else}{i + 1}{/if}</span>
             <span class="t">{song.title}<small>{song.artist} · {song.source}{song.available ? '' : ' · unavailable'}</small></span>
             <span class="d">{fmt(song.duration)}</span>
           </button>
-          <button class="track-menu" popovertarget={`queue-actions-${i}`} aria-label="Actions for {song.title}" aria-haspopup="menu"><Icon name="more" /></button>
-          <div class="queue-actions" id={`queue-actions-${i}`} popover="auto" role="menu" aria-label="Actions for {song.title}" onbeforetoggle={positionActions} ontoggle={event => { if (event.newState === 'open') event.currentTarget.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true }); }} use:keyboardScope={actionKeys}>
+          <button class="track-menu" popovertarget={nativePopovers ? actionId : undefined} data-actions-for={actionId} aria-label="Actions for {song.title}" aria-haspopup="menu" aria-expanded={openActionId === actionId} aria-controls={actionId} onclick={() => void toggleFallbackActions(actionId)}><Icon name="more" /></button>
+          <div class="queue-actions" id={actionId} data-queue-actions popover={nativePopovers ? 'auto' : undefined} hidden={!nativePopovers && openActionId !== actionId} role="menu" aria-label="Actions for {song.title}" onbeforetoggle={positionActions} ontoggle={event => {
+            if (event.newState === 'open') { openActionId = actionId; event.currentTarget.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true }); }
+            else if (openActionId === actionId) openActionId = '';
+          }} use:keyboardScope={actionKeys}>
             <button role="menuitem" onclick={event => { moveQueue(i, i - 1); closeActions(event); }} disabled={i === 0} aria-label="Move {song.title} up">Move up</button>
             <button role="menuitem" onclick={event => { moveQueue(i, i + 1); closeActions(event); }} disabled={i === player.queue.length - 1} aria-label="Move {song.title} down">Move down</button>
             <button role="menuitem" onclick={event => { closeActions(event); removeQueue(i); void tick().then(() => { const tracks = listElement?.querySelectorAll<HTMLButtonElement>('.select-song:not(:disabled)'); tracks?.[Math.min(i, tracks.length - 1)]?.focus({ preventScroll: true }); }); }} aria-label="Remove {song.title}">Remove</button>
@@ -145,7 +183,7 @@
   button:disabled { opacity: .45; cursor: default; }
   button:focus-visible { outline: 2px solid var(--play-accent); outline-offset: -2px; }
   .detail-art-meta p { margin: 16px 0 0; color: var(--play-muted); font-size: 13px; overflow-wrap: anywhere; }
-  .empty-art { background: var(--play-bar); display: grid; place-items: center; }
+  .empty-art.detail-cover { background: var(--play-bar); display: grid; place-items: center; }
   .list-tabs { position: sticky; top: 0; z-index: 1; background: var(--play-surface); display: flex; gap: 16px; border-bottom: 1px solid var(--play-line); margin-bottom: 20px; }
   .list-tabs button { display: flex; gap: 8px; align-items: center; padding: 12px 0; min-height: 44px; border: 0; background: transparent; color: var(--play-muted); border-bottom: 2px solid transparent; font-weight: 550; white-space: nowrap; }
   .list-tabs button span { color: var(--play-muted); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }

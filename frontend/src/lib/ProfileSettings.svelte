@@ -27,8 +27,8 @@
     <h2 id="profile-title">Library &amp; profile</h2>
     <dl>
       <div><dt>Profile</dt><dd>{status.profile.label}{status.profile.existing ? ' · Existing Music data' : ' · Isolated data'}</dd></div>
-      <div><dt>Music folders</dt><dd>{#each status.musicFolders as path}<div class="folder-row"><span>{path}</span><Button variant="ghost" size="sm" disabled={!!busy} aria-label="Remove {path}" onclick={() => folder('remove', path)}>Remove</Button></div>{:else}No folders selected{/each}</dd></div>
-      <div><dt>Build</dt><dd>{status.build.version}{#if status.build.commit} · {status.build.commit.slice(0, 7)}{/if}{#if status.build.branch} · {status.build.branch}{/if}</dd></div>
+      <div><dt>Music folders</dt><dd>{#each status.musicFolders as path (path)}<div class="folder-row"><span>{path}</span><Button variant="ghost" size="sm" disabled={!!busy} aria-label="Remove {path}" onclick={() => folder('remove', path)}>Remove</Button></div>{:else}No folders selected{/each}</dd></div>
+      <div><dt>Build</dt><dd>{status.build.version}{#if status.build.commit} · {status.build.commit.slice(0, 7)}{/if}{#if status.build.branch} · {status.build.branch}{/if}{#if status.build.dirty} · local changes{/if}</dd></div>
       <div><dt>Data folder</dt><dd>{status.profile.directory}</dd></div>
     </dl>
     <div class="actions">

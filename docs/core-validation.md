@@ -1,12 +1,12 @@
 # Core candidate from PR #10
 
-This branch isolates local music from the original connected-music PR. No new PR
-or remote branch is published until the core candidate has been tried locally.
+This branch isolates local music from the original connected-music PR #10.
+The core candidate was validated locally before creating its replacement PR.
 Original source: `2f0141f`; base: `3235c00` (`origin/main`).
 
 ## Split and decisions
 
-| Core (`codex/core-library`, based on main) | Follow-up (`codex/spotify-integration`, based on core) |
+| Core (`jose/core-library`, based on main) | Follow-up (`jose/spotify-integration-v2`, based on core) |
 | --- | --- |
 | Default/custom folder setup, recursive indexing, empty/error states | OAuth, account connect/disconnect and credential storage |
 | Local catalog search, albums/playlists/artists, Dig, tags/favorites | Saved Spotify catalog indexing, source filtering and recovery |
@@ -18,7 +18,8 @@ The shared interface and packaging stay in core because a first-time local user
 needs a complete installable app. Core does not initialize a provider bridge,
 fetch a Spotify catalog, ask for a playback device or advertise account setup.
 The follow-up is stacked so it adds integration to the tested local foundation.
-PR #10 and its original branch are preserved pending approval of replacements.
+The original branch remains available for comparison. The core replacement is
+published first; Spotify integration remains a separate stacked follow-up.
 
 Audio files remain in place. Adding a folder includes it alongside the default;
 canonical paths deduplicate nested directories and aliases. A combined symlink
@@ -76,7 +77,7 @@ Screenshots: `.audit-results/core-native-onboarding.png`,
 Native packaged restart/persistence and package results are recorded in the local
 `.audit-results/core-split-REPORT.md` alongside final commit/build identifiers.
 Physical speaker output, real phone touch and measured frame rate remain untested.
-GitHub builds have not been triggered for these unpublished branches.
+GitHub builds had not been triggered at the time of this October 3 validation.
 
 ## Try the core candidate before publishing
 
@@ -93,5 +94,42 @@ GitHub builds have not been triggered for these unpublished branches.
 5. Try Dig Random pick and your own album tags/favorites. Quit and reopen using
    the launcher; folder selections, history and saved preferences should remain.
 6. Report any problem with the build identifier in **Settings → Advanced**,
-   the action taken and the expected result. Keep the candidate private until
-   core behavior is accepted; then publish core first and Spotify as its follow-up.
+   the action taken and the expected result. Validate the core candidate independently; Spotify integration follows in its
+   separate stacked branch.
+
+
+## Reliability review fixes and revalidation — 2026-10-04
+
+The Svelte/Vite review fixes introduce explicit runtime ownership and teardown,
+immutable catalog snapshots and revision invalidation, stable queue-entry IDs,
+owned collection loading operations, authoritative search refreshes, guarded
+preferences, shared desktop/history request contracts and a catalog provider
+adapter. See `docs/core-reliability.md` for the integration boundaries.
+
+- Frontend Svelte/TypeScript check: **0 errors, 0 warnings**.
+- Vitest browser component/rune suite: **19 passed**, using the production Svelte
+  Vite plugin; final run has no Svelte runtime warnings.
+- Desktop contracts/storage/history/folder/player/packaging suite: **11 passed**.
+- Existing frontend deterministic suite: **7 passed**.
+- Synthetic desktop bridge contract: **1 passed**. Total: **38 tests passed**.
+- Agent application regressions: passed at **1920×1080, 1440×900, 1024×768 and
+  390×844**. Evidence: `.audit-results/2026-10-04T10-28-59-354Z/`.
+- Scoped visual inspection: phone Settings/player, tablet expanded Settings/player,
+  desktop Settings/search and native missing-artwork/history. No references replaced;
+  complete comparison of every screenshot against approved references remains pending.
+- Mac ARM64 portable packaging and native launch: passed for local build
+  `0.5.0-preview.202610041229.829affc`, containing the tested uncommitted fixes.
+
+The final package reopened an isolated profile with both default and Archive
+folders. UI search found tracks from both roots and played **KWA - Hopscotch**,
+advancing to **3.161523 seconds** with a decoded duration of **181.7664 seconds**
+and the listening icon active. Recent history retained an earlier play across
+restart; failed artwork displayed a square placeholder. Pause/resume, keyboard
+seeking and adding a song without resuming playback were also checked in the
+preceding local candidate. No browser JavaScript errors were reported.
+
+The native folder chooser automation was blocked in this latest pass; startup
+used the desktop setup API with the same authorized paths. The native chooser
+was exercised in the October 3 journey above. Physical speaker output, real phone
+touch and measured frame rate remain untested. Linux packaging is covered by the
+workflow and portable-launcher unit test, but was not rebuilt locally on this Mac.

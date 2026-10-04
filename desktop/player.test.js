@@ -92,10 +92,10 @@ test('actual local player loads collections, controls audio, preserves queue occ
       assert.deepEqual(m.player.queue.map(track => track.id), ids, 'cancelled random lookup cannot append a stale track');
       assert.equal(m.player.randomRequesting, false);
     }
-    m.player.requesting = true;
+    const independentLoad = m.beginCollectionOperation('add', 'independent');
     const grid = { count: 1, key: 'separate-loading', find: () => 0, song: async () => randomTrack };
     m.jumpRandom(() => grid); m.setOrder('normal', () => grid); await settle();
     assert.equal(m.player.requesting, true, 'cancelling random loading does not clear an independent collection request');
-    m.player.requesting = false;
+    independentLoad.finish();
   } finally { m.disposePlayback(); }
 });

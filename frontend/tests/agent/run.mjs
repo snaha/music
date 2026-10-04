@@ -74,7 +74,7 @@ try {
     assert(`getComputedStyle(document.querySelector('.bar')).getPropertyValue('--play-surface').trim() !== ''`, 'Player must share its artwork palette');
     assert(`document.documentElement.scrollWidth<=innerWidth`, 'Now playing must fit the viewport');
     capture(size, 'now-playing');
-    run('click', '.now-playing button[popovertarget="queue-actions-0"]');
+    run('click', '.now-playing .song:first-child .track-menu');
     assert(`!!document.querySelector('.now-playing [popover]:popover-open')`, 'Track actions must open on demand');
     run('press', 'Escape');
     assert(`document.querySelector('.now-playing') && !document.querySelector('.now-playing [popover]:popover-open')`, 'Escape must close track actions before the player');

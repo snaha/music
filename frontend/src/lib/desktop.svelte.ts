@@ -3,7 +3,8 @@ export const desktop = $state<{ status: DesktopStatus | null; error: string }>({
 export function initDesktop() {
   const api = window.desktop;
   if (!api) return () => {};
-  const dispose = api.onChange(status => { desktop.status = status; });
-  api.status().then(status => { desktop.status = status; }).catch(error => { desktop.error = error.message; });
-  return dispose;
+  let active = true;
+  const dispose = api.onChange(status => { if (active) desktop.status = status; });
+  api.status().then(status => { if (active) desktop.status = status; }).catch(error => { if (active) desktop.error = error.message; });
+  return () => { active = false; dispose(); };
 }

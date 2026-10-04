@@ -1,10 +1,14 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { restore, session } from './lib/api.svelte';
-  import { library, MODES, pick, setMode, watchScan } from './lib/library.svelte';
+  import { library, MODES, pick, setMode } from './lib/library.svelte';
   import { next, player, prev, toggle } from './lib/player.svelte';
   import Bar from './lib/Bar.svelte';
   import Login from './lib/Login.svelte';
+  import { startRuntime } from './lib/runtime';
+  import { preferenceStatus } from './lib/preferences-status.svelte';
+  import { retryPreferences, dismissPreferenceError } from './lib/preferences';
+  import { catalog } from './lib/discovery.svelte';
   import { toolbar } from './lib/ui-style.svelte';
   import Grid from './lib/Grid.svelte';
   import Visualizer from './lib/Visualizer.svelte';
@@ -14,7 +18,7 @@
   let ready = $state(false), idle = $state(false);
   let idleTimer: ReturnType<typeof setTimeout>;
 
-  onMount(() => { if (!window.desktop) restore().finally(() => (ready = true)); return watchScan(); });
+  onMount(() => { if (!window.desktop) restore().finally(() => (ready = true)); return startRuntime(); });
   onMount(initDesktop);
   onMount(() => { wake(); return () => clearTimeout(idleTimer); });
   $effect(() => { if (session.api) untrack(() => setMode('albums')); });
@@ -80,6 +84,11 @@
 
 </script>
 
+{#if preferenceStatus.error || catalog.error}
+  <div class="preference-notice" role="status">{preferenceStatus.error || catalog.error}
+    <button onclick={retryPreferences}>Retry saving</button><button aria-label="Dismiss saving notice" onclick={() => { dismissPreferenceError(); catalog.error = ''; }}>Dismiss</button>
+  </div>
+{/if}
 <svelte:window onkeydown={onkeydown} onpointermove={wake} onpointerdown={wake} />
 
 {#if window.desktop && (!ready || desktop.status?.phase !== 'ready' || desktop.status?.onboarding)}
@@ -103,7 +112,7 @@
         <div><dt><kbd>↑</kbd> <kbd>↓</kbd> in queue</dt><dd>Navigate queued tracks</dd></div>
         <div><dt><kbd>Tab</kbd></dt><dd>Navigate controls</dd></div>
         <div><dt><kbd>←</kbd> <kbd>→</kbd> on seek</dt><dd>Seek 10 seconds</dd></div>
-        {#each MODES as m, i}<div><dt><kbd>{i + 1}</kbd></dt><dd>{m}</dd></div>{/each}
+        {#each MODES as m, i (m)}<div><dt><kbd>{i + 1}</kbd></dt><dd>{m}</dd></div>{/each}
         <div><dt><kbd>?</kbd></dt><dd>Show this help</dd></div>
       </dl>
       <p>While typing, keys enter text. Space activates focused buttons.</p>
@@ -122,4 +131,8 @@
   dl > div { display: grid; grid-template-columns: 45% 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--ui-border); }
   dd { margin: 0; } dt, p { color: var(--ui-text-muted); } p { margin: 0; font-size: 12px; }
   kbd { font: inherit; color: var(--ui-text); }
+
+.preference-notice { position: fixed; bottom: 80px; left: 16px; right: 16px; z-index: 100; padding: 12px; background: var(--bg, #18181b); color: var(--fg, #fff); border: 1px solid currentColor; border-radius: 8px; }
+.preference-notice button { margin-left: 12px; }
+
 </style>

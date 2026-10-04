@@ -1,3 +1,4 @@
+import { readJsonPreference, writePreference } from './preferences';
 import { untrack } from 'svelte';
 import { session } from './api.svelte';
 import { listeningHistory, loadHistory, historyStats } from './listening-history.svelte';
@@ -35,9 +36,9 @@ export function loadCatalog() {
   if (storageKey) flush();
   clearTimeout(saveTimer); colorQueue.clear();
   storageKey = key; catalog.stats = {}; catalog.error = ''; resetDig();
-  try { const data = JSON.parse(localStorage.getItem(key) || '{}'); catalog.items = Object.fromEntries(Object.entries(data).map(([id, value]) => [id, clean(value)])); }
+  try { const data = readJsonPreference(key, {}); catalog.items = Object.fromEntries(Object.entries(data).map(([id, value]) => [id, clean(value)])); }
   catch { catalog.items = {}; }
-  try { catalog.colors = JSON.parse(localStorage.getItem(`${key}:colors`) || '{}'); } catch { catalog.colors = {}; }
+  try { catalog.colors = Object.fromEntries(Object.entries(readJsonPreference(`${key}:colors`, {})).map(([id, value]) => [id, clean(value)])); } catch { catalog.colors = {}; }
   loadHistory();
 }
 export function saveMetadata(id: string, patch: AlbumMetadata) {
@@ -45,8 +46,11 @@ export function saveMetadata(id: string, patch: AlbumMetadata) {
   persist();
 }
 function flush() {
-  try { localStorage.setItem(storageKey, JSON.stringify(catalog.items)); localStorage.setItem(`${storageKey}:colors`, JSON.stringify(catalog.colors)); catalog.error = ''; }
-  catch { catalog.error = 'Album preferences could not be saved. Free some browser storage and try again.'; }
+  if (!storageKey) return;
+  const items = writePreference(storageKey, JSON.stringify(catalog.items));
+  const colors = writePreference(`${storageKey}:colors`, JSON.stringify(catalog.colors));
+  // The preferences service owns retryable persistence errors.
+  if (items && colors) catalog.error = '';
 }
 function persist() { clearTimeout(saveTimer); saveTimer = setTimeout(flush, 200); }
 export function metadata(tile: Collection) {
@@ -73,7 +77,7 @@ export function coverRevision(tile: Collection) {
   return (hash >>> 0).toString(36);
 }
 const colorQueue = new Map<string, Collection>();
-let colorRunning = false;
+let colorRunning = false, colorLifetime = 0;
 export function warmColors(tiles: Collection[]) {
   for (const tile of tiles) if (tile.cover && (!catalog.colors[tile.id]?.colorReady || catalog.colors[tile.id]?.colorRevision !== coverRevision(tile))) colorQueue.set(tile.id, tile);
   if (!colorRunning) void consumeColors();
@@ -83,16 +87,17 @@ async function consumeColors() {
   while (colorQueue.size) {
     const batch = [...colorQueue.values()].slice(0, 3);
     for (const tile of batch) colorQueue.delete(tile.id);
-    const key = storageKey;
+    const key = storageKey, lifetime = colorLifetime;
     await Promise.all(batch.map(async tile => {
       const hue = await artworkHue(tile.cover);
-      if (storageKey === key && (!colorQueue.has(tile.id) || coverRevision(colorQueue.get(tile.id)!) === coverRevision(tile))) { catalog.colors[tile.id] = { hue, colorRevision: coverRevision(tile), colorReady: true }; persist(); }
+      if (lifetime === colorLifetime && storageKey === key && (!colorQueue.has(tile.id) || coverRevision(colorQueue.get(tile.id)!) === coverRevision(tile))) { catalog.colors[tile.id] = { hue, colorRevision: coverRevision(tile), colorReady: true }; persist(); }
     }));
     await new Promise(resolve => setTimeout(resolve, 32));
   }
   colorRunning = false; catalog.colorsLoading = false;
 }
-$effect.root(() => {
+export function startDiscovery() {
+ const destroy = $effect.root(() => {
   $effect(() => { if (!session.api) return; session.username; session.base; untrack(loadCatalog); });
   $effect(() => {
     if (!session.api) return;
@@ -105,3 +110,5 @@ $effect.root(() => {
     return () => clearTimeout(timer);
   });
 });
+ return () => { destroy(); statsRevision++; colorLifetime++; clearTimeout(saveTimer); colorQueue.clear(); flush(); };
+}

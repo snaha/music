@@ -1,3 +1,4 @@
+import { readPreference, writePreference } from './preferences';
 import { session } from './api.svelte';
 
 const USER = 'share';
@@ -9,7 +10,7 @@ const USER = 'share';
 export async function shareLink() {
   const api = session.api!, base = session.base;
   const d = window.desktop ? (await window.desktop.status()).share : undefined;
-  let password = d?.password ?? localStorage.getItem('share.password');
+  let password = d?.password ?? readPreference('share.password');
   const fresh = !password;
   if (!password) password = crypto.randomUUID().replace(/-/g, '');
 
@@ -24,7 +25,7 @@ export async function shareLink() {
   const existing = users.find((u) => u.userName === USER);
   if (!existing) await nd('/user', { method: 'POST', body: JSON.stringify({ userName: USER, name: 'Share', password, isAdmin: false }) });
   else if (fresh || d) await nd(`/user/${existing.id}`, { method: 'PUT', body: JSON.stringify({ ...existing, password }) });
-  localStorage.setItem('share.password', password);
+  writePreference('share.password', password);
 
   const ip = d ? await window.desktop!.lanIp() : '';
   // in the browser, localhost is swapped for the LAN address vite saw when it started

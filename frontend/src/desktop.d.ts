@@ -1,19 +1,12 @@
-type DesktopProfile = { name: string; label: string; directory: string; existing: boolean; portable: boolean };
-type DesktopStatus = {
-  phase: 'setup' | 'starting' | 'ready' | 'error'; error: string; onboarding: boolean;
-  url: string; username: string; password: string; frame: boolean;
-  share?: { webPort: number; port: number; password: string };
-  build: { version: string; channel: string; commit: string; branch: string; builtAt: string; runUrl: string };
-  profile: DesktopProfile; musicFolder: string; musicFolders: string[];
-  defaultMusicFolder: string; defaultMusicFolderAvailable: boolean; source: string; canCopy: boolean;
-};
-type ProfileEntry = { name: string; label: string; createdAt: number; setupComplete: boolean };
+type DesktopStatus = import('../../shared/contracts').DesktopStatus;
+type DesktopProfile = import('../../shared/contracts').DesktopProfile;
+type ProfileEntry = import('../../shared/contracts').ProfileEntry;
 // injected by the Electron preload (desktop/preload.js)
 interface Window {
   musicHistory?: {
     stats?(query: { scope: string }): Promise<Record<string, { plays: number; lastPlayed: number }>>;
-    write(batch: { scope: string; contexts: import('./lib/listening-history.svelte').ListeningContext[]; entries: { id: string; contextId: string; index: number; cursor: number; playedAt: number }[]; importKey?: string }): Promise<void>;
-    list(query: { scope: string; query?: string; offset?: number }): Promise<{ entries: import('./lib/listening-history.svelte').HistoryEntry[]; total: number; hasMore: boolean }>;
+    write(batch: import('../../shared/contracts').HistoryBatch): Promise<void>;
+    list(query: { scope: string; query?: string; offset?: number }): Promise<import('../../shared/contracts').HistoryPage>;
     clear(scope: string): Promise<void>;
   };
   desktop?: {

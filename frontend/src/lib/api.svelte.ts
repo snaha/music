@@ -1,3 +1,4 @@
+import { readJsonPreference, writePreference } from './preferences';
 import { SubsonicAPI } from 'subsonic-api';
 
 type Creds = { url: string; username: string; password: string };
@@ -22,10 +23,10 @@ export async function login(c: Creds) {
   u.searchParams.delete('id');
   session.api = api; session.base = base; session.authQs = u.searchParams.toString(); session.username = c.username;
   session.admin = ok(await api.getUser({ username: c.username })).user.adminRole;
-  localStorage.setItem('creds', JSON.stringify(c));
+  writePreference('creds', JSON.stringify(c));
 }
 
-export function logout() { localStorage.removeItem('creds'); session.api = null; }
+export function logout() { writePreference('creds', null); session.api = null; }
 
 export async function restore() {
   // a share link carries the account in the fragment: #u=share&p=...&s=http://server
@@ -40,8 +41,8 @@ export async function restore() {
     if (status.phase === 'ready') await login(status);
     return;
   }
-  const raw = localStorage.getItem('creds');
-  if (raw) await login(JSON.parse(raw)).catch(logout);
+  const saved = readJsonPreference<Partial<Creds> | null>('creds', null);
+  if (saved && typeof saved.url === 'string' && typeof saved.username === 'string' && typeof saved.password === 'string') await login(saved as Creds).catch(logout);
 }
 
 export const coverUrl = (id: string | undefined, size = 300) =>

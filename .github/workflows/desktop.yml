@@ -18,7 +18,7 @@ on:
         default: false
   pull_request: # preview builds, published as a pr-<number> pre-release
     types: [opened, synchronize, reopened, closed]
-    paths: ['frontend/**', 'desktop/**', '.github/workflows/desktop.yml']
+    paths: ['frontend/**', 'desktop/**', 'shared/**', '.github/workflows/desktop.yml']
   push:
     tags: ['v*']
 permissions:
@@ -62,6 +62,8 @@ jobs:
         working-directory: frontend
       - run: pnpm install --frozen-lockfile
         working-directory: desktop
+      - run: pnpm --dir frontend exec playwright install --with-deps chromium
+      - run: pnpm --dir frontend test:unit
       - run: pnpm --dir frontend check
       - run: pnpm --dir desktop test
       - run: pnpm --dir frontend audit:test

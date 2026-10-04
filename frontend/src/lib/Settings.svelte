@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { keyboardScope } from './keyboard';
+  import { isElementVisible } from './dom';
   import Button from './ui/button.svelte';
   import ProfileSettings from './ProfileSettings.svelte';
   import { desktop } from './desktop.svelte';
@@ -35,7 +36,7 @@
   function close() { dialog.close(); }
   function containFocus(event: KeyboardEvent) {
     const controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], summary, [tabindex]:not([tabindex="-1"])')]
-      .filter(control => control.tabIndex >= 0 && control.checkVisibility() && !control.closest('[inert]'));
+      .filter(control => control.tabIndex >= 0 && isElementVisible(control) && !control.closest('[inert]'));
     const first = controls[0], last = controls.at(-1);
     if (!first || !last) return;
     const active = document.activeElement;

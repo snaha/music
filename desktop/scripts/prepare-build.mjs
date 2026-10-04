@@ -7,12 +7,13 @@ const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const channel = process.env.MUSIC_CHANNEL === 'preview' ? 'preview' : 'stable';
 const commit = process.env.GITHUB_SHA || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || execFileSync('git', ['branch', '--show-current'], { cwd: root, encoding: 'utf8' }).trim();
+const dirty = execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim().length > 0;
 const run = process.env.GITHUB_RUN_NUMBER || '0';
 const version = channel === 'preview' ? `${pkg.version}-preview.${run}.${commit.slice(0, 7)}` : pkg.version;
 const productName = channel === 'preview' ? 'Music Preview' : 'Music';
 const developerSigned = !!process.env.CSC_LINK;
 const notarized = developerSigned && !!(process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID);
-const info = { version, channel, productName, commit, branch, builtAt: new Date().toISOString(), runUrl: process.env.GITHUB_RUN_ID ? `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}` : '', developerSigned, notarized };
+const info = { dirty, version, channel, productName, commit, branch, builtAt: new Date().toISOString(), runUrl: process.env.GITHUB_RUN_ID ? `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}` : '', developerSigned, notarized };
 await writeFile(path.join(root, 'build-info.json'), JSON.stringify(info, null, 2));
 await writeFile(path.join(root, 'builder-config.json'), JSON.stringify({
   ...pkg.build,

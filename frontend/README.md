@@ -66,3 +66,14 @@ or leaving full screen. While it is open it owns the keyboard, so `space` does n
 | `R` or `scroll lock` | toggle automatic cycling (lock the current preset) |
 | `T` | song title animation |
 | `Esc` | close |
+
+## Component tests and browser support
+
+Run `pnpm test:unit` for browser component/rune regressions using the same Svelte
+Vite plugin as production. Use `pnpm exec playwright install chromium` once if the
+Vitest browser provider cannot find Chromium, or set `MUSIC_TEST_BROWSER` to an
+installed executable. Application journeys continue to use `tests/agent/README.md`.
+
+The syntax baseline is Chromium 111, Firefox 114 and Safari 16.4. Queue popovers
+and Settings focus checks have capability fallbacks; Vite does not polyfill DOM
+APIs. See `../docs/core-reliability.md` for state ownership and provider contracts.

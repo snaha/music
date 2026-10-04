@@ -1,3 +1,4 @@
+import { validateHistoryRequest, isListeningContext } from '../shared/contracts.js';
 import { DatabaseSync } from 'node:sqlite';
 
 // Owned by Music, never by Navidrome. All calls run on the database worker.
@@ -16,7 +17,9 @@ export class MusicStore {
       CREATE TABLE IF NOT EXISTS music_entities(scope TEXT NOT NULL,id TEXT NOT NULL,source TEXT NOT NULL,kind TEXT NOT NULL,metadata TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(scope,id));
       CREATE TABLE IF NOT EXISTS embeddings(scope TEXT NOT NULL,entity_id TEXT NOT NULL,model TEXT NOT NULL,dimensions INTEGER NOT NULL,vector BLOB NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(scope,entity_id,model),FOREIGN KEY(scope,entity_id) REFERENCES music_entities(scope,id));`);
   }
-  write({ scope, contexts, entries, importKey }) {
+  write(batch) {
+    validateHistoryRequest('write', batch);
+    const { scope, contexts, entries, importKey } = batch;
     if (typeof scope !== 'string' || !scope || scope.length > 2048 || !Array.isArray(contexts) || !Array.isArray(entries)) throw new Error('Invalid history batch');
     if (importKey && this.db.prepare('SELECT 1 FROM imports WHERE scope=? AND key=?').get(scope, importKey)) return;
     this.db.exec('BEGIN');
@@ -46,7 +49,10 @@ export class MusicStore {
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  list({ scope, query = '', offset = 0, limit = 50 }) {
+  list(request) {
+    validateHistoryRequest('list', request);
+    const { scope, query = '', offset = 0 } = request;
+    let { limit = 50 } = request;
     if (typeof scope !== 'string' || typeof query !== 'string' || !Number.isInteger(offset) || offset < 0) throw new Error('Invalid history query');
     limit = Math.max(1, Math.min(100, Number(limit) || 50));
     const words = query.slice(0, 500).match(/[\p{L}\p{N}]+/gu) || [];
@@ -58,12 +64,14 @@ export class MusicStore {
     const contexts = new Map();
     const getContext = this.db.prepare('SELECT data FROM history_contexts WHERE scope=? AND id=?');
     const entries = rows.map(({ contextId, ...entry }) => {
-      if (!contexts.has(contextId)) contexts.set(contextId, JSON.parse(getContext.get(scope, contextId).data));
+      if (!contexts.has(contextId)) contexts.set(contextId, (() => { const value = JSON.parse(getContext.get(scope, contextId).data); if (!isListeningContext(value)) throw new Error('Saved listening context is invalid'); return value; })());
       return { ...entry, context: contexts.get(contextId) };
     });
     return { entries, total, hasMore: offset + entries.length < total };
   }
-  stats({ scope }) {
+  stats(request) {
+    validateHistoryRequest('stats', request);
+    const { scope } = request;
     if (typeof scope !== 'string' || !scope || scope.length > 2048) throw new Error('Invalid history scope');
     const counts = new Map();
     const add = (row) => { if (!row.id) return; const old = counts.get(row.id); counts.set(row.id, { plays: (old?.plays || 0) + row.plays, lastPlayed: Math.max(old?.lastPlayed || 0, row.lastPlayed) }); };
@@ -71,7 +79,9 @@ export class MusicStore {
     for (const row of this.db.prepare(`SELECT json_extract(e.metadata,'$.albumId') id,count(*) plays,max(p.played_at) lastPlayed FROM plays p JOIN music_entities e ON e.scope=p.scope AND e.id=p.track_id WHERE p.scope=? AND json_extract(e.metadata,'$.albumId') IS NOT NULL AND (p.origin_id IS NULL OR p.origin_id<>json_extract(e.metadata,'$.albumId')) GROUP BY json_extract(e.metadata,'$.albumId')`).all(scope)) add(row);
     return Object.fromEntries(counts);
   }
-  clear({ scope }) {
+  clear(request) {
+    validateHistoryRequest('clear', request);
+    const { scope } = request;
     this.db.exec('BEGIN');
     try {
       for (const table of ['play_search','plays','history_contexts']) this.db.prepare(`DELETE FROM ${table} WHERE scope=?`).run(scope);
