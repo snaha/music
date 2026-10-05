@@ -7,6 +7,14 @@ import { build, transform } from 'esbuild';
 import { compileModule } from '../frontend/tests/runes-compiler.mjs';
 import { MusicDatabase } from './music-database.js';
 
+async function waitForHistory(history) {
+  const deadline = Date.now() + 2000;
+  while (history.loading) {
+    assert.ok(Date.now() < deadline, 'history refresh did not settle');
+    await new Promise(setImmediate);
+  }
+}
+
 test('frontend migrates to the worker, pages and searches history, isolates users and ignores stale reads', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'music-history-ui-'));
   const database = new MusicDatabase(path.join(directory, 'music.sqlite'));
@@ -48,7 +56,7 @@ test('frontend migrates to the worker, pages and searches history, isolates user
     const oldestLoaded = m.listeningHistory.entries.at(-1).id;
     m.recordHistory(context, 0, 0);
     await m.historyStats();
-    for (let i = 0; i < 20 && m.listeningHistory.loading; i++) await new Promise(setImmediate);
+    await waitForHistory(m.listeningHistory);
     assert.equal(m.listeningHistory.entries.length, 101, 'recording playback preserves loaded history pages');
     assert.equal(m.listeningHistory.entries.at(-1).id, oldestLoaded);
     assert.equal(m.listeningHistory.hasMore, true);
@@ -63,11 +71,17 @@ test('frontend migrates to the worker, pages and searches history, isolates user
     m.session.username = 'other'; m.loadHistory(); await m.searchHistory(''); await stale;
     assert.equal(m.listeningHistory.total, 0);
     m.session.username = 'admin'; m.loadHistory(); await m.searchHistory('');
+    await m.searchHistory('', true);
+    const oldestBeforeRetry = m.listeningHistory.entries.at(-1).id;
     unavailable = true; m.recordHistory(context, 0, 0); await m.searchHistory('');
-    assert.equal(m.listeningHistory.entries.length, 51, 'failed write keeps the new play visible');
+    assert.equal(m.listeningHistory.entries.length, 101, 'failed write keeps the new play and loaded pages visible');
     assert.ok(m.listeningHistory.error);
-    unavailable = false; m.retryHistory(); await m.searchHistory('');
+    unavailable = false; m.retryHistory(); await m.historyStats();
+    await waitForHistory(m.listeningHistory);
     assert.equal(m.listeningHistory.total, 124, 'retry saves the original event without duplication');
+    assert.equal(m.listeningHistory.entries.length, 101, 'retry itself preserves the loaded page window');
+    assert.equal(m.listeningHistory.entries.at(-1).id, oldestBeforeRetry);
+    assert.equal(m.listeningHistory.error, '');
     const beforeClear = m.searchHistory('night'); m.clearHistory(); await beforeClear; await m.searchHistory('');
     assert.equal(m.listeningHistory.total, 0, 'late reads do not undo clear');
     m.session.username = 'other'; m.loadHistory(); await m.searchHistory('');

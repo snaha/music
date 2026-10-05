@@ -133,3 +133,35 @@ used the desktop setup API with the same authorized paths. The native chooser
 was exercised in the October 3 journey above. Physical speaker output, real phone
 touch and measured frame rate remain untested. Linux packaging is covered by the
 workflow and portable-launcher unit test, but was not rebuilt locally on this Mac.
+
+## Regression safeguards — 2026-10-05
+
+Candidate: `e752612` plus the tests, test configuration and review documentation
+in this change. Application runtime code is unchanged in this safeguards pass.
+See [the coverage ledger](regression-coverage.md) for each error class and gap,
+[the runbook](application-review.md) for repeatable checks, and
+[the repo review skill](../.agents/skills/review-music/SKILL.md) for future reviews.
+
+- Svelte/TypeScript: **0 errors, 0 warnings**.
+- Browser component/rune tests: **25 passed**, including a cold Vite cache run.
+- Desktop tests: **23 passed**; frontend deterministic tests: **7 passed**.
+- Synthetic bridge contract: **1 passed**. Total: **56 tests passed**.
+- Desktop frontend and preload builds: **passed**. Existing Subsonic browser
+  `node:crypto` externalization and large-chunk advisories remain.
+- Two isolated main-entrypoint mutations were rejected by the intended assertions:
+  moving the window after migration and omitting cleanup before startup retry.
+  Temporary mutation copies were removed; logs are under
+  `.audit-results/reliability-prevention/`.
+- Skill schema validation and Markdown reference checks: **passed**. Svelte
+  analysis of Dig/Queue/Settings found no issues; optional `bind:this` suggestions
+  in Settings do not justify unrelated runtime changes in this pass.
+
+The expanded suites run through the existing CI commands; no new test framework
+was introduced. Historical CI for `e752612` completed checks, Mac/Linux packaging
+and preview publication successfully (Actions run `37290051371`). That result
+does not establish CI success for this newer safeguards commit.
+
+Full application screenshots, native migration data, audible output, physical
+touch and measured frame rate were not re-exercised in this test/documentation
+pass. Main integration tests use real HTTP ports/files but mocked windows,
+migration, child process and database; real worker/store checks remain separate.

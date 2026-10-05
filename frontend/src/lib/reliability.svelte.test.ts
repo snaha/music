@@ -17,6 +17,7 @@ import { artworkFocusScope } from './artwork-focus';
 import DigPanel from './DigPanel.svelte';
 import Queue from './Queue.svelte';
 import CollectionDetails from './CollectionDetails.svelte';
+import Settings from './Settings.svelte';
 import type { Collection, Track } from './music';
 
 const tile: Collection = { id: 'local:album:a', rawId: 'a', source: 'local', kind: 'album', title: 'Album', sub: 'Artist', cover: '', count: 2, available: true };
@@ -42,6 +43,7 @@ beforeEach(() => {
   session.api = api(); session.username = crypto.randomUUID(); session.base = 'http://localhost:1234';
   library.tiles = []; library.revision = 0;
   player.queue = []; player.index = -1; player.order = 'normal'; player.collectionOperations = []; player.error = ''; player.loadingCollectionId = ''; player.queueTab = 'queue';
+  player.queueOpen = false;
 });
 afterEach(() => { cleanup(); disposeCatalogSearch(); disposePlayback(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -237,6 +239,80 @@ describe('review regressions', () => {
     expect(coverRevision({ ...tile, cover: cover('album-one', 1234, 'old') })).toBe(coverRevision({ ...tile, cover: cover('album-one', 4321, 'new') }));
     expect(coverRevision({ ...tile, cover: cover('album-one', 1234, 'old') })).not.toBe(coverRevision({ ...tile, cover: cover('album-two', 1234, 'old') }));
     expect(coverRevision({ ...tile, cover: '/cover-v1.png' })).not.toBe(coverRevision({ ...tile, cover: '/cover-v2.png' }));
+    expect(coverRevision({ ...tile, cover: 'https://example.com/cover-v1.png' })).not.toBe(coverRevision({ ...tile, cover: 'https://example.com/cover-v2.png' }));
+  });
+  it('owns one Dig pointer, commits cancellation and discards an unmounted draft', async () => {
+    dig.mood = 50; dig.energy = 50; dig.moodOn = false;
+    const view = render(DigPanel, { matches: 1, total: 1, tagged: 1, onrandom: () => {} }); await tick();
+    const map = document.querySelector<HTMLButtonElement>('.mood-map')!;
+    vi.spyOn(map, 'setPointerCapture').mockImplementation(() => {});
+    const bounds = map.getBoundingClientRect();
+    const event = (type: string, id: number, x: number) => new PointerEvent(type, { bubbles: true, pointerId: id, button: 0, clientX: bounds.left + bounds.width * x, clientY: bounds.top + bounds.height * .2 });
+    try {
+      map.dispatchEvent(event('pointerdown', 1, .6));
+      map.dispatchEvent(event('pointermove', 2, .9));
+      map.dispatchEvent(event('pointerup', 2, .9));
+      expect(dig.mood).toBe(50);
+      map.dispatchEvent(event('pointercancel', 1, .6)); await tick();
+      expect(dig.mood).toBe(60);
+      map.dispatchEvent(event('pointerdown', 3, .8));
+      await view.unmount(); await new Promise(requestAnimationFrame); await tick();
+      expect(dig.mood).toBe(60);
+    } finally { dig.mood = 50; dig.energy = 50; dig.moodOn = false; }
+  });
+  it('restores nested artwork ownership and isolates results added in the background', async () => {
+    const background = document.createElement('div'); background.className = 'browse';
+    const opener = document.createElement('button'); background.append(opener);
+    const lower = document.createElement('section');
+    const lowerButton = document.createElement('button');
+    lower.append(lowerButton);
+    const upper = document.createElement('section');
+    const upperButton = document.createElement('button');
+    upper.append(upperButton);
+    const results = document.createElement('div'); results.className = 'results';
+    document.body.append(background, lower, upper);
+    opener.focus();
+    let disposeLower: (() => void) | undefined = artworkFocusScope(lower);
+    let disposeUpper: (() => void) | undefined;
+    try {
+      await new Promise<void>(resolve => queueMicrotask(resolve));
+      expect(document.activeElement).toBe(lowerButton);
+      disposeUpper = artworkFocusScope(upper);
+      document.body.append(results);
+      await new Promise<void>(resolve => queueMicrotask(resolve));
+      expect(lower.inert).toBe(true); expect(results.inert).toBe(true); expect(document.activeElement).toBe(upperButton);
+      disposeUpper();
+      disposeUpper = undefined;
+      await new Promise<void>(resolve => queueMicrotask(resolve));
+      expect(lower.inert).toBe(false); expect(background.inert).toBe(true); expect(document.activeElement).toBe(lowerButton);
+      disposeLower();
+      disposeLower = undefined;
+      await new Promise<void>(resolve => queueMicrotask(resolve));
+      expect(background.inert).toBe(false); expect(results.inert).toBe(false); expect(document.activeElement).toBe(opener);
+    } finally {
+      disposeUpper?.();
+      disposeLower?.();
+      background.remove();
+      lower.remove();
+      upper.remove();
+      results.remove();
+    }
+  });
+  it('lets the real Settings modal own focus above Queue and restores the queue control', async () => {
+    play([track]);
+    render(Queue, { onclose: () => {}, palette: '', options: createRawSnippet(() => ({ render: () => '<div></div>' })) }); await tick();
+    const opener = document.querySelector<HTMLButtonElement>('.now-playing button')!;
+    opener.focus();
+    const onclose = vi.fn();
+    const settings = render(Settings, { art: true, motion: false, onclose }); await tick();
+    const dialog = document.querySelector<HTMLDialogElement>('dialog.settings-dialog')!;
+    expect(dialog.open).toBe(true); expect(dialog.contains(document.activeElement)).toBe(true);
+    const close = dialog.querySelector<HTMLButtonElement>('[aria-label="Close settings"]')!;
+    close.focus(); expect(document.activeElement).toBe(close);
+    dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+    await settings.unmount(); await tick();
+    expect(document.activeElement).toBe(opener);
   });
   it('previews a Dig drag without reranking until release and keeps keyboard control immediate', async () => {
     dig.mood = 50; dig.energy = 50; dig.moodOn = false;

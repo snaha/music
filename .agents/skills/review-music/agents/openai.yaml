@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Music"
+  short_description: "Review Music changes for reliability and integration"
+  default_prompt: "Use $review-music to review the current branch for user-visible regressions and integration risks."
