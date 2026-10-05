@@ -37,7 +37,7 @@ state. Deleted files disappear after a successful refresh.
 profile and history DTOs; `shared/contracts.js` validates history and desktop request
 boundaries. History writes declare schema version 1; unversioned legacy batches
 remain supported. Packaging includes the shared validator module alongside the app resources.
-The database repeats validation so direct worker callers follow the same contract.
+The main process validates the trusted frame and request envelope; full queue/event validation runs once in the database worker, including for direct callers.
 
 `CatalogProvider<Client>` defines domain-level catalog capabilities, pages, tracks
 and search results. `local-catalog.ts` adapts Subsonic to this contract. Future Spotify
@@ -58,7 +58,41 @@ DOM capabilities require runtime fallbacks: Settings focus checks support browse
 without checkVisibility, and queue menus support browsers without native popovers.
 This does not establish physical-device or full cross-browser certification.
 
+## PR review fixes
+
+- Recording a play refreshes all loaded history pages. Filtered history does not
+  optimistically insert a nonmatching play; failed refreshes retain visible rows.
+- Cover-color fingerprints use stable local artwork IDs, independent of auth salt
+  and profile ports. External artwork URLs still invalidate when their URL changes.
+- The Dig map previews pointer motion locally and publishes a filter on release.
+  Keyboard and preset inputs remain immediate. Dragging does not rerank every frame.
+- Artwork views share focus ownership, isolate the library with `inert`, respect
+  nested dialogs and keep bottom playback controls available. Explicit opening
+  replaces hot corners; closing restores the opener without scrolling.
+- Late native play/pause events read the audio element’s current state, so a queued
+  event cannot undo a newer transport intention.
+- Queue moves/removals preserve surviving shuffle occurrences and the cursor.
+  Removing the current occurrence follows its existing shuffled successor.
+- The first native window shows before storage import. Import failures/timeouts
+  preserve the old data and show a warning; later launches retry. Existing values
+  and backgrounds take precedence over partial older imports.
+- Startup retries close the HTTP server, terminate the history worker and stop the
+  previous child before checking saved ports. Listening failures reject startup
+  instead of reporting readiness; shutdown uses the same cleanup path.
+- Trusted IPC permits query/hash changes within `app://music/`, while rejecting
+  other documents, origins and subframes.
+
+Embeddings and entity schema scaffolding remain deliberately in core for upcoming
+work. This does not claim an embedding pipeline is implemented. Spotify-only URI,
+external-link and saved-state fields and the unused sidebar were removed from core;
+provider interfaces and unavailable-source guards remain.
+
 ## Validation
+
+Install both packages with `pnpm --dir frontend install` and
+`pnpm --dir desktop install` before running the suites. Desktop integration tests
+compile actual frontend rune modules through a frontend-owned compiler export;
+they do not depend on an internal `node_modules` file layout.
 
 `pnpm --dir frontend test:unit` runs browser component/rune tests through the actual
 Svelte Vite plugin. Set `MUSIC_TEST_BROWSER` to a Chromium executable if needed; the

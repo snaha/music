@@ -20,5 +20,7 @@ export class MusicDatabase {
       catch (error) { this.pending.delete(id); reject(error); }
     });
   }
-  close() { return this.closing ??= this.call('close'); }
+  close() {
+    return this.closing ??= this.call('close').finally(() => this.worker.terminate());
+  }
 }

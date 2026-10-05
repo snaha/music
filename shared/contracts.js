@@ -11,9 +11,16 @@ export function isListeningContext(context) {
     && ['normal', 'shuffle', 'random'].includes(context.order) && Array.isArray(context.permutation)
     && context.permutation.every(index => Number.isInteger(index) && index >= 0 && index < context.queue.length);
 }
-export function validateHistoryRequest(method, args) {
+export function validateHistoryEnvelope(method, args) {
   if (!object(args) || !text(args.scope) || !args.scope || args.scope.length > 2048) throw new Error('Invalid history scope');
   if (args.version !== undefined && args.version !== HISTORY_SCHEMA_VERSION) throw new Error('Unsupported history schema version');
+  if (!['write', 'list', 'clear', 'stats'].includes(method)) throw new Error('Unknown history operation');
+  if (method === 'write' && (!Array.isArray(args.contexts) || !Array.isArray(args.entries))) throw new Error('Invalid history batch');
+  if (method === 'list' && ((args.query !== undefined && (!text(args.query) || args.query.length > 4096)) || (args.offset !== undefined && (!Number.isSafeInteger(args.offset) || args.offset < 0)) || (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100)))) throw new Error('Invalid history query');
+  return args;
+}
+export function validateHistoryRequest(method, args) {
+  validateHistoryEnvelope(method, args);
   if (method === 'write') {
     if (!Array.isArray(args.contexts) || !args.contexts.every(isListeningContext) || !Array.isArray(args.entries)) throw new Error('Invalid history batch');
     if (args.importKey !== undefined && !text(args.importKey)) throw new Error('Invalid history import');

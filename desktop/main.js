@@ -1,6 +1,7 @@
-import { validateDesktopRequest, validateHistoryRequest } from '../shared/contracts.js';
+import { validateDesktopRequest, validateHistoryEnvelope } from '../shared/contracts.js';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session as electronSession, shell } from 'electron';
 import { MusicDatabase } from './music-database.js';
+import { closeFrontend, isMusicDocument, listenFrontend, stopMusicServer } from './service-lifecycle.js';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -70,15 +71,14 @@ function lanIp() {
 
 // serves the built frontend on the LAN so phones can open the share link; the window uses it too
 const MIME = { '.html': 'text/html', '.webmanifest': 'application/manifest+json', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
-function serveFrontend(port) {
-  const server = http.createServer((req, res) => {
+function createFrontend() {
+  return http.createServer((req, res) => {
     const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     let file = path.join(dist, p === '/' ? 'index.html' : p);
     if (!file.startsWith(dist) || !existsSync(file) || statSync(file).isDirectory()) file = path.join(dist, 'index.html');
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream' });
     createReadStream(file).pipe(res);
-  }).listen(port, '0.0.0.0');
-  return server;
+  });
 }
 
 async function waitFor(url, child) {
@@ -95,10 +95,10 @@ let musicDatabase;
 
 let frontendServer;
 let bootstrapping = true;
-let phase = 'setup', startupError = '', startPromise;
+let phase = 'setup', startupError = '', startupWarning = '', startPromise;
 let st, local = '';
 const desktopStatus = () => ({
-  phase, error: startupError, onboarding: !config.setupComplete,
+  phase, error: startupError, warning: startupWarning, onboarding: !config.setupComplete,
   url: local, username: st?.username || '', password: st?.password || '', frame: st?.frame ?? true,
   share: st ? { webPort: st.webPort, port: st.port, password: st.sharePassword } : undefined,
   build, profile: { name: profile.name, label: config.label || (profile.existing ? 'Music' : profile.name === 'default' ? 'Preview' : profile.name), directory: profile.directory, existing: profile.existing, portable: profile.portable },
@@ -108,7 +108,7 @@ const desktopStatus = () => ({
 });
 const changed = () => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send('desktop:changed', desktopStatus()); };
 const trusted = event => {
-  if (event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== page) throw new Error('This action is available only in Music.');
+  if (event.senderFrame !== event.sender.mainFrame || !isMusicDocument(event.senderFrame?.url)) throw new Error('This action is available only in Music.');
 };
 
 app.whenReady().then(async () => {
@@ -118,12 +118,12 @@ app.whenReady().then(async () => {
   protocol.handle('app', request => {
     const url = new URL(request.url);
     if (url.hostname !== 'music') return new Response('Not found', { status: 404 });
+    if (url.pathname === '/__music_starting') return new Response('<!doctype html><meta name=viewport content="width=device-width"><title>Music</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#18181b;color:#eee;font:16px system-ui}</style><p role=status>Opening your library…</p>', { headers: { 'content-type': 'text/html' } });
     if (url.pathname === '/__music_storage_migration') return new Response('<!doctype html><title>Music storage migration</title>', { headers: { 'content-type': 'text/html' } });
     const file = path.resolve(dist, `.${decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname)}`);
     if (path.relative(dist, file).startsWith('..') || !existsSync(file) || !statSync(file).isFile()) return new Response('Not found', { status: 404 });
     return net.fetch(pathToFileURL(file).href);
   });
-  await migrateStorage(profile, config);
   const dataDir = path.join(profile.directory, 'navidrome');
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   st = readJSON(path.join(dataDir, 'credentials.json'), null);
@@ -131,12 +131,12 @@ app.whenReady().then(async () => {
   phase = config.setupComplete ? 'starting' : 'setup';
   for (const method of ['write', 'list', 'clear', 'stats']) ipcMain.handle(`music-history:${method}`, async (event, args) => {
     trusted(event);
-    validateHistoryRequest(method, args);
+    validateHistoryEnvelope(method, args);
     if (!musicDatabase) throw new Error('Your library is still starting.');
     return musicDatabase.call(method, args);
   });
   // a frame can't be added to or removed from an open window, so the window is built anew for it
-  async function open(bounds, maximized) {
+  async function open(bounds, maximized, initializing = false) {
     const win = new BrowserWindow({
       width: 980, height: 760, minWidth: 360, minHeight: 560,
       title: `${build.channel === 'preview' ? 'Music Preview' : 'Music'} · ${config.label || profile.name}`,
@@ -156,11 +156,11 @@ app.whenReady().then(async () => {
       })()`));
     }
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    win.webContents.on('will-navigate', (event, url) => { if (url !== page) event.preventDefault(); });
+    win.webContents.on('will-navigate', (event, url) => { if (!isMusicDocument(url)) event.preventDefault(); });
     win.webContents.on('before-input-event', (e, input) => { // Ctrl+Q quits, also without window chrome (Cmd+Q on macOS comes from the app menu)
       if (input.control && input.key.toLowerCase() === 'q') { e.preventDefault(); app.quit(); }
     });
-    await win.loadURL(page);
+    await win.loadURL(initializing ? 'app://music/__music_starting' : page);
     if (maximized) win.maximize();
     win.show();
     return win;
@@ -233,6 +233,7 @@ app.whenReady().then(async () => {
         const folders = profileMusicFolders(config);
         if (folders.length) config.musicFolders = normalizeMusicFolders(folders, profile.directory);
         phase = 'starting'; startupError = ''; changed();
+        await stopServices();
         // An older build does not take our profile lock. Its saved listening ports
         // provide a conservative guard against opening its live databases.
         if (profile.existing) {
@@ -248,17 +249,18 @@ app.whenReady().then(async () => {
             ND_DEVAUTOCREATEADMINPASSWORD: st.password, ND_ENABLEINSIGHTSCOLLECTOR: 'false', ND_SCANNER_SCHEDULE: '1h', ND_SCANNER_FOLLOWSYMLINKS: 'true', ND_LOGLEVEL: 'warn' },
         });
         navidrome = child;
-        child.on('error', error => { startupError = `Cannot start the bundled music server: ${error.message}`; phase = 'error'; changed(); });
-        child.on('exit', (code, signal) => { if (!app.isQuitting && phase === 'ready') { startupError = `The music server stopped (${signal || `exit ${code}`}). Restart Music to reconnect.`; phase = 'error'; changed(); } });
+        child.on('error', error => { if (navidrome !== child) return; startupError = `Cannot start the bundled music server: ${error.message}`; phase = 'error'; changed(); });
+        child.on('exit', (code, signal) => { if (navidrome === child && !app.isQuitting && phase === 'ready') { startupError = `The music server stopped (${signal || `exit ${code}`}). Restart Music to reconnect.`; phase = 'error'; changed(); } });
         await waitFor(`${local}/rest/ping`, child);
-        frontendServer = serveFrontend(st.webPort);
+        frontendServer = createFrontend();
+        await listenFrontend(frontendServer, st.webPort);
         musicDatabase = new MusicDatabase(path.join(profile.directory, 'music.sqlite'));
         phase = 'ready';
         if (options.source) config.setupComplete = true;
         saveProfile(profile, config); changed();
         return desktopStatus();
       } catch (error) {
-        await stopNavidrome();
+        await stopServices();
         phase = 'error'; startupError ||= error.message; changed(); throw new Error(startupError);
       }
     })();
@@ -280,7 +282,13 @@ app.whenReady().then(async () => {
     saveProfile(profile, config);
     scheduleRelaunch(profile.existing ? ['--use-existing'] : ['--data-dir', profile.root, '--profile', profile.name]);
   });
-  await open({}, config.setupComplete);
+  const initialWindow = await open({}, config.setupComplete, true);
+  try { await migrateStorage(profile, config); }
+  catch (error) {
+    console.error('Storage migration:', error.message);
+    startupWarning = 'Some settings from an older version could not be imported. Your music is still available. Restart Music to retry the import.';
+  }
+  await initialWindow.loadURL(page);
   bootstrapping = false;
   if (config.setupComplete) void start().catch(() => {});
 }).catch(error => { dialog.showErrorBox('Cannot open Music', error.message); app.quit(); });
@@ -291,15 +299,13 @@ function scheduleRelaunch(args) {
   // Let the invoking renderer receive its result before shutdown destroys it.
   setTimeout(() => app.quit(), 150);
 }
-async function stopNavidrome() {
-  const child = navidrome;
+async function stopServices() {
+  const database = musicDatabase, server = frontendServer, child = navidrome;
+  musicDatabase = null;
+  frontendServer = null;
   navidrome = null;
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise(resolve => {
-    const timer = setTimeout(() => child.kill('SIGKILL'), 3000);
-    child.once('close', () => { clearTimeout(timer); resolve(); });
-    child.kill();
-  });
+  const results = await Promise.allSettled([database?.close(), closeFrontend(server), stopMusicServer(child)]);
+  for (const result of results) if (result.status === 'rejected') console.error('Music cleanup:', result.reason);
 }
 
 let shutdownComplete = false, shuttingDown = false;
@@ -309,9 +315,7 @@ app.on('before-quit', event => {
   if (shuttingDown) return;
   shuttingDown = true; app.isQuitting = true;
   void (async () => {
-    await musicDatabase?.close().catch(error => console.error('Music database:', error.message));
-    await stopNavidrome();
-    frontendServer?.close();
+    await stopServices();
     if (app.isReady() && hasInstanceLock) electronSession.defaultSession.flushStorageData();
   })().finally(() => { shutdownComplete = true; app.quit(); });
 });

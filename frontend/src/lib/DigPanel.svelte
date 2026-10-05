@@ -1,17 +1,62 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { dig, digActive, resetDig, choosePreset, presets } from './discovery.svelte';
   import Slider from './ui/slider.svelte';
   import Icon from './ui/icon.svelte';
   let { matches, total, tagged, onrandom }: { matches: number; total: number; tagged: number; onrandom: () => void } = $props();
-  function point(event: PointerEvent) {
-    const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    dig.mood = Math.round(Math.max(0, Math.min(100, (event.clientX - bounds.left) / bounds.width * 100)));
-    dig.energy = Math.round(Math.max(0, Math.min(100, 100 - (event.clientY - bounds.top) / bounds.height * 100)));
-    dig.moodOn = true; dig.preset = '';
+  // The marker follows the pointer without publishing a library-wide filter change.
+  let dragging = $state(false);
+  let draftMood = $state(50), draftEnergy = $state(50);
+  const mood = $derived(dragging ? draftMood : dig.mood);
+  const energy = $derived(dragging ? draftEnergy : dig.energy);
+  let pointerId: number | undefined;
+  let dragBounds: DOMRect | undefined;
+  let frame: number | undefined;
+  let pendingPoint: { mood: number; energy: number } | undefined;
+  function flushPoint() {
+    if (frame !== undefined) cancelAnimationFrame(frame);
+    frame = undefined;
+    if (!pendingPoint) return;
+    draftMood = pendingPoint.mood;
+    draftEnergy = pendingPoint.energy;
+    pendingPoint = undefined;
   }
+  function point(event: PointerEvent) {
+    const bounds = dragBounds;
+    if (!bounds?.width || !bounds.height) return;
+    pendingPoint = {
+      mood: Math.round(Math.max(0, Math.min(100, (event.clientX - bounds.left) / bounds.width * 100))),
+      energy: Math.round(Math.max(0, Math.min(100, 100 - (event.clientY - bounds.top) / bounds.height * 100))),
+    };
+    if (frame === undefined) frame = requestAnimationFrame(flushPoint);
+  }
+  function startDrag(event: PointerEvent & { currentTarget: HTMLButtonElement }) {
+    if (pointerId !== undefined || event.button !== 0) return;
+    pointerId = event.pointerId;
+    dragBounds = event.currentTarget.getBoundingClientRect();
+    draftMood = dig.mood;
+    draftEnergy = dig.energy;
+    dragging = true;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    point(event);
+  }
+  function finishDrag() {
+    if (pointerId === undefined) return;
+    flushPoint();
+    pointerId = undefined;
+    dragBounds = undefined;
+    Object.assign(dig, { mood: draftMood, energy: draftEnergy, moodOn: true, preset: '' });
+    dragging = false;
+  }
+  function endDrag(event: PointerEvent) {
+    if (event.pointerId !== pointerId) return;
+    if (event.type === 'pointerup') point(event);
+    finishDrag();
+  }
+  onDestroy(() => { if (frame !== undefined) cancelAnimationFrame(frame); });
   function key(event: KeyboardEvent) {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) return;
-    event.preventDefault(); event.stopPropagation(); dig.moodOn = true; dig.preset = '';
+    event.preventDefault(); event.stopPropagation(); finishDrag(); dig.moodOn = true; dig.preset = '';
     if (event.key === 'Home') { dig.mood = 50; dig.energy = 50; }
     else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') dig.mood = Math.max(0, Math.min(100, dig.mood + (event.key === 'ArrowLeft' ? -5 : 5)));
     else dig.energy = Math.max(0, Math.min(100, dig.energy + (event.key === 'ArrowDown' ? -5 : 5)));
@@ -20,23 +65,23 @@
 <section id="dig-controls" class="dig-panel" aria-label="Dig into your music">
   <div class="presets" aria-label="Mood presets">
     <button onclick={onrandom} disabled={!matches}>Random pick</button>
-    {#each presets as preset}<button class:selected={dig.preset === preset[0]} aria-pressed={dig.preset === preset[0]} onclick={() => choosePreset(preset)}>{preset[0]}</button>{/each}
+    {#each presets as preset (preset[0])}<button class:selected={dig.preset === preset[0]} aria-pressed={dig.preset === preset[0]} onclick={() => { finishDrag(); choosePreset(preset); }}>{preset[0]}</button>{/each}
   </div>
   <div class="dig-body">
     <div class="mood-control">
-      <button class="mood-map" class:active={dig.moodOn} aria-label="Mood map: {dig.mood}% happy, {dig.energy}% intense. Use arrow keys to adjust, Home to center." onkeydown={key}
-        onpointerdown={event => { event.currentTarget.setPointerCapture(event.pointerId); point(event); }} onpointermove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) point(event); }}>
+      <button class="mood-map" class:active={dig.moodOn || dragging} aria-label="Mood map: {mood}% happy, {energy}% intense. Use arrow keys to adjust, Home to center." onkeydown={key}
+        onpointerdown={startDrag} onpointermove={event => { if (event.pointerId === pointerId) point(event); }} onpointerup={endDrag} onpointercancel={endDrag} onlostpointercapture={endDrag}>
         <span class="corner tl">Angry, dark</span><span class="corner tr">Party, euphoric</span><span class="corner bl">Melancholic</span><span class="corner br">Peaceful, chill</span>
         <span class="axis left">Sad</span><span class="axis right">Happy</span><span class="axis top">Intense</span><span class="axis bottom">Calm</span>
         <span class="cross horizontal"></span><span class="cross vertical"></span>
-        <span class="point" style:left="{dig.mood}%" style:top="{100 - dig.energy}%"></span>
+        <span class="point" style:left="{mood}%" style:top="{100 - energy}%"></span>
       </button>
     </div>
     <div class="preferences">
-      {#each [['familiarity', 'Familiar', 'Forgotten'], ['acoustic', 'Acoustic', 'Electric'], ['vocal', 'Vocal', 'Instrumental']] as [key, left, right]}
+      {#each [['familiarity', 'Familiar', 'Forgotten'], ['acoustic', 'Acoustic', 'Electric'], ['vocal', 'Vocal', 'Instrumental']] as [key, left, right] (key)}
         <div class="preference"><span>{left}</span><Slider type="single" min={0} max={100} step={1} value={key === 'familiarity' ? dig.familiarity : 100 - dig[key as 'acoustic' | 'vocal']} onValueChange={value => { dig[key as 'familiarity' | 'acoustic' | 'vocal'] = key === 'familiarity' ? value : 100 - value; dig.preset = ''; }} aria-label="{left} to {right}" /><span>{right}</span></div>
       {/each}
-      <div class="dig-footer"><span role="status">{digActive() ? `${matches} matching` : total} {matches === 1 ? 'album' : 'albums'}</span><button onclick={resetDig} disabled={!digActive()}><Icon name="reset" /> Reset</button></div>
+      <div class="dig-footer"><span role="status">{digActive() ? `${matches} matching` : total} {matches === 1 ? 'album' : 'albums'}</span><button onclick={() => { finishDrag(); resetDig(); }} disabled={!digActive()}><Icon name="reset" /> Reset</button></div>
       <p>Mood and sound use your album tags ({tagged} tagged). Familiarity uses your listening history. Add tags from an album’s menu.</p>
     </div>
   </div>

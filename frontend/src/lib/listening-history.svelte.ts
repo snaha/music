@@ -12,6 +12,7 @@ let account = '';
 let persistenceTimer: ReturnType<typeof setTimeout> | undefined;
 let operations: Promise<unknown> = Promise.resolve();
 let queryRevision = 0;
+let requestedWindow = 50;
 const pendingClears = new Set<string>();
 const queuedContexts = new Map<string, Set<string>>();
 const unsaved = new Map<string, ReturnType<typeof snapshot>[]>();
@@ -34,6 +35,7 @@ export function loadHistory() {
   browserStats.values = {};
   account = next; listeningHistory.entries = []; listeningHistory.query = ''; listeningHistory.total = 0; listeningHistory.hasMore = false; listeningHistory.error = '';
   queryRevision++;
+  requestedWindow = 50;
   try {
     const data = readJsonPreference<{ contexts?: unknown; entries?: unknown; stats?: unknown } | null>(account, null);
     if (!data || !Array.isArray(data.contexts) || !Array.isArray(data.entries)) throw new Error('No legacy history');
@@ -89,35 +91,64 @@ function persist(entries = listeningHistory.entries, changedContext?: ListeningC
   if (writePreference(account, JSON.stringify({ ...batch, stats: $state.snapshot(browserStats.values) }))) { listeningHistory.persistedRevision++; listeningHistory.error = ''; }
   else listeningHistory.error = 'Browser storage is full. Your current session is still available.';
 }
-export async function searchHistory(query = listeningHistory.query, more = false) {
+export async function searchHistory(query = listeningHistory.query, more = false, retainLoaded = false) {
   loadHistory();
   const revision = ++queryRevision;
   const activeAccount = account;
+  const sameQuery = query === listeningHistory.query;
+  const offset = more && sameQuery ? listeningHistory.entries.length : 0;
+  if (!sameQuery || (!more && !retainLoaded)) requestedWindow = 50;
+  else requestedWindow = Math.max(requestedWindow, listeningHistory.entries.length) + (more ? 50 : 0);
+  const target = requestedWindow;
   listeningHistory.query = query;
   const bridge = window.musicHistory;
   const activeScope = scope();
-  const offset = more ? listeningHistory.entries.length : 0;
   if (!bridge) return;
   listeningHistory.loading = true;
   try {
-    const result = await enqueue(async () => { if (revision !== queryRevision || activeAccount !== account) return; if (pendingClears.has(activeScope) || unsaved.get(activeScope)?.length) throw new Error('Unsaved listening events'); return bridge.list({ scope: activeScope, query, offset }); }) as { entries: HistoryEntry[]; total: number; hasMore: boolean };
+    const result = await enqueue(async () => {
+      if (revision !== queryRevision || activeAccount !== account) return;
+      if (pendingClears.has(activeScope) || unsaved.get(activeScope)?.length) throw new Error('Unsaved listening events');
+      const entries: HistoryEntry[] = [];
+      let total = 0, hasMore = false;
+      do {
+        const page = await bridge.list({ scope: activeScope, query, offset: offset + entries.length, limit: Math.min(50, target - offset - entries.length) });
+        if (revision !== queryRevision || activeAccount !== account) return;
+        if (!Array.isArray(page.entries) || !page.entries.every(entry => isListeningContext(entry.context) && Number.isInteger(entry.index) && !!entry.context.queue[entry.index]) || !Number.isInteger(page.total) || page.total < 0) throw new Error('Invalid history response');
+        entries.push(...page.entries);
+        total = page.total;
+        hasMore = page.hasMore;
+        if (!page.entries.length) break;
+      } while (hasMore && offset + entries.length < target);
+      return { entries, total, hasMore };
+    }) as { entries: HistoryEntry[]; total: number; hasMore: boolean } | undefined;
     if (!result || revision !== queryRevision || activeAccount !== account) return;
-    if (!Array.isArray(result.entries) || !result.entries.every(entry => isListeningContext(entry.context) && Number.isInteger(entry.index) && !!entry.context.queue[entry.index]) || !Number.isInteger(result.total) || result.total < 0) throw new Error('Invalid history response');
-    const contexts = new Map(listeningHistory.entries.map(e => [e.context.id, e.context]));
-    const entries = result.entries.map(e => ({ ...e, context: contexts.get(e.context.id) || e.context }));
-    listeningHistory.entries = more ? [...listeningHistory.entries, ...entries.filter(e => !listeningHistory.entries.some(old => old.id === e.id))] : entries;
-    listeningHistory.total = result.total; listeningHistory.hasMore = result.hasMore; listeningHistory.error = '';
+    const contexts = new Map(listeningHistory.entries.map(entry => [entry.context.id, entry.context]));
+    const entries = result.entries.map(entry => ({ ...entry, context: contexts.get(entry.context.id) || entry.context }));
+    const existingIds = new Set(listeningHistory.entries.map(entry => entry.id));
+    listeningHistory.entries = offset ? [...listeningHistory.entries, ...entries.filter(entry => !existingIds.has(entry.id))] : entries;
+    listeningHistory.total = result.total;
+    listeningHistory.hasMore = result.hasMore;
+    listeningHistory.error = '';
   } catch { /* enqueue reports a recoverable error; keep the visible list. */ }
   finally { if (revision === queryRevision) listeningHistory.loading = false; }
 }
 export function recordHistory(context: ListeningContext, index: number, cursor: number) {
   loadHistory();
-  listeningHistory.entries.unshift({ id: crypto.randomUUID(), context, index, cursor, playedAt: Date.now() });
-  listeningHistory.total++;
-  if (window.musicHistory) void persist([listeningHistory.entries[0]], undefined, true);
-  else { countEntry(listeningHistory.entries[0], browserStats.values); saveHistory(); }
-  if (window.musicHistory) void searchHistory(listeningHistory.query);
-  else listeningHistory.entries = listeningHistory.entries.slice(0, 100);
+  const entry = { id: crypto.randomUUID(), context, index, cursor, playedAt: Date.now() };
+  // Only unfiltered history can optimistically include a new listening event.
+  if (!window.musicHistory || !listeningHistory.query.trim()) {
+    listeningHistory.entries.unshift(entry);
+    listeningHistory.total++;
+  }
+  if (window.musicHistory) {
+    void persist([entry], undefined, true);
+    void searchHistory(listeningHistory.query, false, true);
+  } else {
+    countEntry(entry, browserStats.values);
+    saveHistory();
+    listeningHistory.entries = listeningHistory.entries.slice(0, 100);
+  }
 }
 export function saveHistory(context?: ListeningContext) {
   // Storage work follows the immediate playback response.
@@ -125,9 +156,9 @@ export function saveHistory(context?: ListeningContext) {
   if (window.musicHistory) { void persist(context ? [] : listeningHistory.entries, context); return; }
   persistenceTimer = setTimeout(() => { void persist(); }, 250);
 }
-export function retryHistory() { if (pendingClears.has(scope())) clearHistory(); else void persist(); void searchHistory(); }
+export function retryHistory() { if (pendingClears.has(scope())) clearHistory(); else void persist(); void searchHistory(listeningHistory.query, false, true); }
 export function clearHistory() {
-  loadHistory(); clearTimeout(persistenceTimer); queryRevision++;
+  loadHistory(); clearTimeout(persistenceTimer); queryRevision++; requestedWindow = 50;
   browserStats.values = {};
   listeningHistory.entries = []; listeningHistory.total = 0; listeningHistory.hasMore = false; listeningHistory.loading = false;
   if (window.musicHistory) {

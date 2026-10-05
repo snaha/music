@@ -66,14 +66,10 @@
     items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
   }
   function listen(index: number) { if (index === player.index && player.song?.id === player.queue[index]?.id) void toggle(); else jump(index); }
-  let closeButton: HTMLButtonElement;
   const fmt = (s = 0) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   function close() { onclose(); player.topHidden = true; }
   onMount(() => {
     loadHistory(); historyQuery = listeningHistory.query;
-    const previous = document.activeElement as HTMLElement | null;
-    closeButton.focus({ preventScroll: true });
-    return () => { if (previous?.isConnected && (document.activeElement === document.body || closeButton.closest('.now-playing')?.contains(document.activeElement))) previous.focus({ preventScroll: true }); else if (!previous?.isConnected && document.activeElement === document.body) document.querySelector<HTMLButtonElement>('[aria-label="Menu"]')?.focus({ preventScroll: true }); };
   });
 </script>
 
@@ -100,7 +96,7 @@
   else close();
 }}>
   {#snippet header()}
-    <button class="detail-icon" bind:this={closeButton} onclick={close} aria-label="Close now playing"><Icon name="back" /></button>
+    <button class="detail-icon" onclick={close} aria-label="Close now playing"><Icon name="back" /></button>
     <div class="detail-heading"><h1>{player.song?.album || player.song?.title || 'Your queue'}</h1><p>{player.song?.artist || 'Choose a track to start listening.'}</p></div>
     {@render options()}
   {/snippet}

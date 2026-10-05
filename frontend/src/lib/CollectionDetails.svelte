@@ -17,10 +17,9 @@
   let artworkActive = false;
   onMount(() => { artworkActive = true; return () => { artworkActive = false; }; });
   const requestKey = $derived(`${tile.id}:${tile.available}:${tile.indexing}:${tile.count}:${tile.incomplete}:${library.revision}`);
-  let loadedId = '', back: HTMLButtonElement;
+  let loadedId = '';
   let tracks = $state.raw<Track[]>([]), loading = $state(true), error = $state(''), query = $state(''), actions = $state(false), preferences = $state(false), palette = $state(fallbackPalette);
   const shown = $derived(tracks.map((track, index) => ({ track, index })).filter(({ track }) => `${track.title} ${track.artist ?? ''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())));
-  onMount(() => { const previous = document.activeElement as HTMLElement | null; back.focus({ preventScroll: true }); return () => { if (previous?.isConnected && (document.activeElement === document.body || document.activeElement?.closest('.album-view'))) previous.focus({ preventScroll: true }); }; });
   $effect(() => { const cover = tile.cover; let active = true; void artworkPalette(cover).then(value => { if (active) palette = value; }); return () => { active = false; }; });
   $effect(() => {
     requestKey;
@@ -46,7 +45,7 @@
 </script>
 <ArtworkView className="album-view" {palette} label={`${tile.title} details`} onkeydown={keys}>
   {#snippet header()}
-    <button class="detail-icon" bind:this={back} onclick={onclose} aria-label="Back to music"><Icon name="back" /></button>
+    <button class="detail-icon" onclick={onclose} aria-label="Back to music"><Icon name="back" /></button>
     <div class="detail-heading"><h1>{tile.title}</h1><p>{tile.sub}{#if info.year} <span>{' · '}{info.year}</span>{/if}</p></div>
     <label class="track-search"><Icon name="search" /><input aria-label="Search album tracks" placeholder="Search tracks" bind:value={query} /></label>
     <div class="actions">

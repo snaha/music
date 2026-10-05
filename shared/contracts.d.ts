@@ -4,7 +4,7 @@ export type ListeningContext = { id: string; queue: Track[]; origin?: PlaybackOr
 export type HistoryEntry = { id: string; context: ListeningContext; index: number; cursor: number; playedAt: number };
 export type DesktopProfile = { name: string; label: string; directory: string; existing: boolean; portable: boolean };
 export type DesktopStatus = {
-  phase: 'setup' | 'starting' | 'ready' | 'error'; error: string; onboarding: boolean;
+  phase: 'setup' | 'starting' | 'ready' | 'error'; error: string; warning?: string; onboarding: boolean;
   url: string; username: string; password: string; frame: boolean;
   share?: { webPort: number; port: number; password: string };
   build: { dirty?: boolean; version: string; channel: string; commit: string; branch: string; builtAt: string; runUrl: string };
@@ -17,5 +17,6 @@ export type HistoryPage = { entries: HistoryEntry[]; total: number; hasMore: boo
 export const HISTORY_SCHEMA_VERSION: 1;
 export function isStoredTrack(value: unknown): value is Track;
 export function isListeningContext(value: unknown): value is ListeningContext;
+export function validateHistoryEnvelope(method: string, args: unknown): unknown;
 export function validateHistoryRequest(method: string, args: unknown): unknown;
 export function validateDesktopRequest(name: string, args: unknown[]): void;

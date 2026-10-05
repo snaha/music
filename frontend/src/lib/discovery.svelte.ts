@@ -71,9 +71,16 @@ export function digScore(tile: Collection) {
   return distances.length && Math.max(...distances) <= 45 ? 1 - distances.reduce((a, b) => a + b, 0) / distances.length / 100 : 0;
 }
 export function coverRevision(tile: Collection) {
-  // Persist a fingerprint, never a signed local artwork URL.
+  // A local artwork ID survives auth salts and profile port changes.
+  // Other URLs retain their full identity so changed external artwork invalidates.
+  let identity = tile.cover;
+  try {
+    const url = new URL(tile.cover);
+    const id = url.searchParams.get('id');
+    if (tile.source === 'local' && url.pathname.endsWith('/rest/getCoverArt') && id) identity = `local:${id}:${url.searchParams.get('size') || ''}`;
+  } catch { /* Relative and external artwork keeps its original identity. */ }
   let hash = 2166136261;
-  for (const char of tile.cover) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  for (const char of identity) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
   return (hash >>> 0).toString(36);
 }
 const colorQueue = new Map<string, Collection>();

@@ -149,26 +149,47 @@ export function enqueue(tracks: Track[]) {
   appendToSession(tracks, queueVersion); player.queueOpen = true;
   return queueVersion;
 }
+function shuffleEntries() {
+  return player.order === 'shuffle' ? [...perm].map(index => player.queue[index]?.queueEntryId) : [];
+}
+function reconcileShuffle(entries: (string | undefined)[], current: Track | undefined) {
+  if (player.order !== 'shuffle') return;
+  const positions = new Map(player.queue.map((track, index) => [track.queueEntryId, index]));
+  perm = Uint32Array.from(entries.flatMap(id => positions.has(id) ? [positions.get(id)!] : []));
+  cursor = current ? [...perm].indexOf(player.queue.indexOf(current)) : -1;
+}
 export function moveQueue(from: number, to: number) {
-  if (from < 0 || to < 0 || from >= player.queue.length || to >= player.queue.length) return;
-  freshHistoryContext();
+  if (from < 0 || to < 0 || from >= player.queue.length || to >= player.queue.length || from === to) return;
+  const sequence = shuffleEntries();
   const current = player.song;
+  freshHistoryContext();
   player.blockedIndex = -1;
-  const [entry] = player.queue.splice(from, 1); player.queue.splice(to, 0, entry);
+  const [entry] = player.queue.splice(from, 1);
+  player.queue.splice(to, 0, entry);
   player.index = current ? player.queue.indexOf(current) : -1;
-  rebuildShuffle(); prepareNext();
+  reconcileShuffle(sequence, current);
+  prepareNext();
 }
 export function removeQueue(index: number) {
   if (index < 0 || index >= player.queue.length) return;
-  freshHistoryContext();
+  const sequence = shuffleEntries();
   const current = player.song;
   const removingCurrent = index === player.index;
+  const successorId = sequence[cursor + 1] ?? sequence[cursor - 1];
+  freshHistoryContext();
   player.queue.splice(index, 1);
   player.blockedIndex = -1;
-  if (!removingCurrent) player.index = current ? player.queue.indexOf(current) : -1;
-  else if (player.queue.length) void start(Math.min(index, player.queue.length - 1));
-  else { queueVersion++; player.index = -1; void pause(); }
-  rebuildShuffle(); prepareNext();
+  const successor = player.order === 'shuffle'
+    ? player.queue.find(track => track.queueEntryId === successorId) ?? player.queue[0]
+    : player.queue[Math.min(index, player.queue.length - 1)];
+  const selected = removingCurrent ? successor : current;
+  player.index = selected ? player.queue.indexOf(selected) : -1;
+  reconcileShuffle(sequence, selected);
+  if (removingCurrent) {
+    if (selected) void start(player.index);
+    else { queueVersion++; void pause(); }
+  }
+  prepareNext();
 }
 
 export function setOrder(order: Order, source: () => Grid) {
@@ -288,8 +309,11 @@ listen('timeupdate', () => {
 });
 listen('ended', () => { if (controller.active === 'local' && !player.pending) { playing(false); next(); } });
 listen('error', () => { if (controller.active === 'local') fail(new Error('Local audio could not be loaded. Check the file and retry or skip.')); });
-listen('pause', () => { if (controller.active === 'local' && !player.pending) playing(false); });
-listen('play', () => { if (controller.active === 'local' && !player.pending) playing(true); });
+// Native media events can arrive after a newer pause/resume intention.
+// Read the element's current state instead of trusting the queued event name.
+const syncPlaying = () => { if (controller.active === 'local' && !player.pending) playing(!audio.paused); };
+listen('pause', syncPlaying);
+listen('play', syncPlaying);
 
   initMediaSession();
 }

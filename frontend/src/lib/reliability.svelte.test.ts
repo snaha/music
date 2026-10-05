@@ -12,6 +12,9 @@ import { browseCollections, registerBrowseSource } from './browse-source';
 import { isElementVisible } from './dom';
 import { startRuntime } from './runtime';
 import { ui } from './ui-style.svelte';
+import { dig, coverRevision } from './discovery.svelte';
+import { artworkFocusScope } from './artwork-focus';
+import DigPanel from './DigPanel.svelte';
 import Queue from './Queue.svelte';
 import CollectionDetails from './CollectionDetails.svelte';
 import type { Collection, Track } from './music';
@@ -225,4 +228,55 @@ it('starts side effects once and disposes preference subscriptions and pending p
   ui.components = original; await tick(); expect(write.mock.calls).toHaveLength(writes);
   expect(player.pending).toBe(false); expect(player.playing).toBe(false);
   stop();
+});
+
+
+describe('review regressions', () => {
+  it('retains the cover fingerprint across auth salts and local port changes', () => {
+    const cover = (id: string, port: number, salt: string) => `http://127.0.0.1:${port}/rest/getCoverArt?id=${id}&size=512&s=${salt}&t=token`;
+    expect(coverRevision({ ...tile, cover: cover('album-one', 1234, 'old') })).toBe(coverRevision({ ...tile, cover: cover('album-one', 4321, 'new') }));
+    expect(coverRevision({ ...tile, cover: cover('album-one', 1234, 'old') })).not.toBe(coverRevision({ ...tile, cover: cover('album-two', 1234, 'old') }));
+    expect(coverRevision({ ...tile, cover: '/cover-v1.png' })).not.toBe(coverRevision({ ...tile, cover: '/cover-v2.png' }));
+  });
+  it('previews a Dig drag without reranking until release and keeps keyboard control immediate', async () => {
+    dig.mood = 50; dig.energy = 50; dig.moodOn = false;
+    render(DigPanel, { matches: 1, total: 1, tagged: 1, onrandom: () => {} }); await tick();
+    const map = document.querySelector<HTMLButtonElement>('.mood-map')!;
+    vi.spyOn(map, 'setPointerCapture').mockImplementation(() => {});
+    const bounds = map.getBoundingClientRect();
+    const event = (type: string, x: number) => new PointerEvent(type, { bubbles: true, pointerId: 1, button: 0, clientX: bounds.left + bounds.width * x, clientY: bounds.top + bounds.height * .2 });
+    map.dispatchEvent(event('pointerdown', .6));
+    map.dispatchEvent(event('pointermove', .8));
+    await new Promise(requestAnimationFrame); await tick();
+    expect(dig.mood).toBe(50); expect(dig.energy).toBe(50);
+    expect((map.querySelector('.point') as HTMLElement).style.left).toBe('80%');
+    map.dispatchEvent(event('pointerup', .8)); await tick();
+    expect(dig.mood).toBe(80); expect(dig.energy).toBe(80);
+    map.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); await tick();
+    expect(dig.mood).toBe(75);
+    dig.mood = 50; dig.energy = 50; dig.moodOn = false;
+  });
+  it('isolates artwork focus, includes playback controls and respects a nested native dialog', async () => {
+    const background = document.createElement('div'); background.className = 'browse';
+    const opener = document.createElement('button'); opener.textContent = 'Album'; background.append(opener);
+    const existingInert = document.createElement('div'); existingInert.className = 'scroll'; existingInert.inert = true;
+    const overlay = document.createElement('section');
+    const first = document.createElement('button'); first.textContent = 'Close'; overlay.append(first);
+    const bar = document.createElement('div'); bar.className = 'bar';
+    const last = document.createElement('button'); last.textContent = 'Play'; bar.append(last);
+    document.body.append(background, existingInert, overlay, bar); opener.focus();
+    const dispose = artworkFocusScope(overlay);
+    try {
+      await new Promise<void>(resolve => queueMicrotask(resolve));
+      expect(background.inert).toBe(true); expect(document.activeElement).toBe(first);
+      first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+      expect(document.activeElement).toBe(last);
+      last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+      expect(document.activeElement).toBe(first);
+      const dialog = document.createElement('dialog'); const input = document.createElement('input'); dialog.append(input); document.body.append(dialog); dialog.showModal(); input.focus();
+      expect(document.activeElement).toBe(input); dialog.close(); dialog.remove(); first.focus();
+    } finally { dispose(); await new Promise<void>(resolve => queueMicrotask(resolve)); }
+    expect(background.inert).toBe(false); expect(existingInert.inert).toBe(true); expect(document.activeElement).toBe(opener);
+    background.remove(); existingInert.remove(); overlay.remove(); bar.remove();
+  });
 });

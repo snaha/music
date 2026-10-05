@@ -70,6 +70,7 @@ try {
     run('focus', '.bar-toggle');
     clickBarBackground();
     run('wait', '.now-playing');
+    assert(`[...document.querySelectorAll('.browse,.scroll,.empty-library,.results')].every(element=>element.inert)`, 'Player must isolate covered library controls while playback controls remain available');
     assert(`document.querySelector('.now-playing .detail-cover') !== null`, 'The full-width bar target must open now playing with large artwork');
     assert(`getComputedStyle(document.querySelector('.bar')).getPropertyValue('--play-surface').trim() !== ''`, 'Player must share its artwork palette');
     assert(`document.documentElement.scrollWidth<=innerWidth`, 'Now playing must fit the viewport');
@@ -96,6 +97,9 @@ try {
     run('wait', '200');
     assert(`document.activeElement.getAttribute('aria-label')==='Search library'`, 'Slash must reveal and focus search');
     run('press', 'q');
+    run('mouse', 'move', '1', String(height - 1));
+    run('mouse', 'move', String(width - 1), String(height - 1));
+    assert(`document.activeElement.getAttribute('aria-label')==='Search library' && !document.querySelector('.now-playing')`, 'Bottom corners must not open the player or steal typing focus');
     assert(`document.activeElement.value==='q' && !document.querySelector('.now-playing')`, 'Typing shortcuts must enter text rather than open views');
     run('press', 'Escape');
     assert(`document.activeElement.value===''`, 'Escape in search must clear the query first');
@@ -263,7 +267,7 @@ try {
     run('click', '.results .song-row .add');
     assert(`window.__auditCommands.length===${commandsBeforeAdd}`, 'Catalog Add to queue must not start playback');
     run('wait', '.now-playing');
-    assert(`document.querySelectorAll('.now-playing .song').length===3 && document.querySelector('.bar .btns button[aria-label="Play"]')`, 'Catalog Add to queue must reveal the appended occurrence while playback stays paused');
+    assert(`document.querySelectorAll('.now-playing .song').length===3 && document.querySelector('.bar .btns button[aria-label="Play"]')`, `Catalog Add to queue must reveal the appended occurrence while playback stays paused; trace=${run('eval', 'JSON.stringify(window.__auditCommands)').trim()}`);
     run('press', 'Escape');
     run('mouse', 'move', String(width / 2), '4');
     run('wait', '200');

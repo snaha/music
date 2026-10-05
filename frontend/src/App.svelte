@@ -16,6 +16,7 @@
   import { desktop, initDesktop } from './lib/desktop.svelte';
 
   let ready = $state(false), idle = $state(false);
+  let dismissedStartupWarning = $state('');
   let idleTimer: ReturnType<typeof setTimeout>;
 
   onMount(() => { if (!window.desktop) restore().finally(() => (ready = true)); return startRuntime(); });
@@ -25,10 +26,12 @@
   let attempted = false;
   function connectDesktop() {
     attempted = true; desktop.error = '';
-    void restore().then(() => { ready = true; }).catch(error => { desktop.error = error.message; });
+    void restore().then(() => { if (desktop.status?.phase === 'ready') ready = true; }).catch(error => { desktop.error = error.message; });
   }
   $effect(() => {
-    if (desktop.status?.phase === 'ready' && !desktop.status.onboarding && !attempted) untrack(connectDesktop);
+    const status = desktop.status;
+    if (status && status.phase !== 'ready') { attempted = false; return; }
+    if (status?.phase === 'ready' && !status.onboarding && !attempted) untrack(connectDesktop);
   });
 
   // any pointer activity (mouse move, tap, touch scroll) shows the bars; they fade again after a pause
@@ -87,6 +90,11 @@
 {#if preferenceStatus.error || catalog.error}
   <div class="preference-notice" role="status">{preferenceStatus.error || catalog.error}
     <button onclick={retryPreferences}>Retry saving</button><button aria-label="Dismiss saving notice" onclick={() => { dismissPreferenceError(); catalog.error = ''; }}>Dismiss</button>
+  </div>
+{/if}
+{#if desktop.status?.warning && dismissedStartupWarning !== desktop.status.warning}
+  <div class="preference-notice" role="status">{desktop.status.warning}
+    <button onclick={() => { dismissedStartupWarning = desktop.status?.warning || ''; }}>Dismiss</button>
   </div>
 {/if}
 <svelte:window onkeydown={onkeydown} onpointermove={wake} onpointerdown={wake} />

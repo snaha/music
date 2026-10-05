@@ -34,7 +34,7 @@ Preview builds use the **Music Preview** application identity and an independent
 
 Each profile has a process lock and separate ports. Separate profiles can run together; two processes cannot write one profile.
 
-The desktop renderer uses the stable `app://music/` origin. On the first upgrade, its old localhost-origin preferences, tags, browser history and custom background are migrated inside the same Chromium profile before rendering. LAN share links continue to use the HTTP frontend server.
+The desktop renderer uses the stable `app://music/` origin. On the first upgrade, its old localhost-origin preferences, tags, browser history and custom background are migrated inside the same Chromium profile before loading the library UI. A startup screen appears immediately; a failed or timed-out import shows a recoverable notice and retries on the next launch. LAN share links continue to use the HTTP frontend server.
 
 The **portable** archive contains the app, an empty `Data/` folder, a launcher and instructions. Extract everything to a writable directory and use **Open Music.command** on macOS or **Open Music.sh** on Linux. Opening the app directly uses the normal preview location instead of the adjacent Data folder. The Linux launcher uses AppImage extraction mode so FUSE is not required.
 
@@ -65,7 +65,7 @@ The workflow publishes a prerelease named `preview-<commit>-<run>` containing no
 PR downloads use the existing **Music Preview** app identity and profile controls. Use Fresh or separate portable folders to keep experiments independent; normal Music data remains separate. Packaging resolves the app bundle from build metadata, so it does not depend on a hard-coded `Music.app` name.
 
 ```sh
-gh workflow run desktop.yml --ref codex/core-library -f channel=preview -f platforms=mac -f publish=true
+gh workflow run desktop.yml --ref jose/core-library -f channel=preview -f platforms=mac -f publish=true
 ```
 
 Frontend checks, the desktop/frontend test suite, and the synthetic desktop-bridge contract test must pass before packaging. The browser regression runner remains a separate agent-driven check. Only selected platforms must succeed before publication. Stable releases still come from `v*` tags and build both platforms. Build metadata is visible in Settings and stamped into preview filenames. Rerunning publication can resume missing assets without replacing downloads already published for that commit/run.

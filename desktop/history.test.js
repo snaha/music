@@ -4,8 +4,7 @@ import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { build, transform } from 'esbuild';
-import compiler from '../frontend/node_modules/svelte/compiler/index.js';
-const { compileModule } = compiler;
+import { compileModule } from '../frontend/tests/runes-compiler.mjs';
 import { MusicDatabase } from './music-database.js';
 
 test('frontend migrates to the worker, pages and searches history, isolates users and ignores stale reads', async () => {
@@ -46,10 +45,20 @@ test('frontend migrates to the worker, pages and searches history, isolates user
     assert.equal(persisted.entries[0].context.queue[0].cover, '', 'signed cover URL is not persisted');
     assert.equal(persisted.entries[0].context.origin.cover, '');
     await m.searchHistory('', true); assert.equal(m.listeningHistory.entries.length, 100);
-    await m.searchHistory('night'); assert.equal(m.listeningHistory.total, 121);
+    const oldestLoaded = m.listeningHistory.entries.at(-1).id;
+    m.recordHistory(context, 0, 0);
+    await m.historyStats();
+    for (let i = 0; i < 20 && m.listeningHistory.loading; i++) await new Promise(setImmediate);
+    assert.equal(m.listeningHistory.entries.length, 101, 'recording playback preserves loaded history pages');
+    assert.equal(m.listeningHistory.entries.at(-1).id, oldestLoaded);
+    assert.equal(m.listeningHistory.hasMore, true);
+    await m.searchHistory('night'); assert.equal(m.listeningHistory.total, 122);
     await m.searchHistory('absent'); assert.equal(m.listeningHistory.total, 0);
+    m.recordHistory(context, 0, 0);
+    assert.equal(m.listeningHistory.entries.length, 0, 'a nonmatching play never flashes into filtered history');
+    await m.historyStats();
     m.session.base = 'http://127.0.0.1:4321'; m.loadHistory(); await m.searchHistory('');
-    assert.equal(m.listeningHistory.total, 121, 'desktop history survives a port change');
+    assert.equal(m.listeningHistory.total, 123, 'desktop history survives a port change');
     const stale = m.searchHistory('night');
     m.session.username = 'other'; m.loadHistory(); await m.searchHistory(''); await stale;
     assert.equal(m.listeningHistory.total, 0);
@@ -58,7 +67,7 @@ test('frontend migrates to the worker, pages and searches history, isolates user
     assert.equal(m.listeningHistory.entries.length, 51, 'failed write keeps the new play visible');
     assert.ok(m.listeningHistory.error);
     unavailable = false; m.retryHistory(); await m.searchHistory('');
-    assert.equal(m.listeningHistory.total, 122, 'retry saves the original event without duplication');
+    assert.equal(m.listeningHistory.total, 124, 'retry saves the original event without duplication');
     const beforeClear = m.searchHistory('night'); m.clearHistory(); await beforeClear; await m.searchHistory('');
     assert.equal(m.listeningHistory.total, 0, 'late reads do not undo clear');
     m.session.username = 'other'; m.loadHistory(); await m.searchHistory('');

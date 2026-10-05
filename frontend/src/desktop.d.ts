@@ -6,7 +6,7 @@ interface Window {
   musicHistory?: {
     stats?(query: { scope: string }): Promise<Record<string, { plays: number; lastPlayed: number }>>;
     write(batch: import('../../shared/contracts').HistoryBatch): Promise<void>;
-    list(query: { scope: string; query?: string; offset?: number }): Promise<import('../../shared/contracts').HistoryPage>;
+    list(query: { scope: string; query?: string; offset?: number; limit?: number }): Promise<import('../../shared/contracts').HistoryPage>;
     clear(scope: string): Promise<void>;
   };
   desktop?: {

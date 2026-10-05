@@ -2,8 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { build, transform } from 'esbuild';
-import svelteCompiler from '../frontend/node_modules/svelte/compiler/index.js';
-const { compileModule } = svelteCompiler;
+import { compileModule } from '../frontend/tests/runes-compiler.mjs';
 
 test('actual local player loads collections, controls audio, preserves queue occurrences and replays history', async () => {
   const output = await build({
@@ -56,7 +55,11 @@ test('actual local player loads collections, controls audio, preserves queue occ
     audioElements[0].currentTime = 100; audioElements[0].dispatchEvent(new Event('timeupdate'));
     assert.equal(m.player.time, 100); assert.ok(scrobbles.some(entry => entry.submission));
     await m.pause(); assert.equal(m.player.playing, false);
-    await m.toggle(); assert.equal(m.player.playing, true); assert.equal(audioElements[0].currentTime, 100, 'resume preserves position');
+    audioElements[0].dispatchEvent(new Event('play'));
+    assert.equal(m.player.playing, false, 'a queued play event cannot undo a completed pause');
+    await m.toggle(); assert.equal(m.player.playing, true);
+    audioElements[0].dispatchEvent(new Event('pause'));
+    assert.equal(m.player.playing, true, 'a queued pause event cannot undo a completed resume'); assert.equal(audioElements[0].currentTime, 100, 'resume preserves position');
     m.jump(2); await settle();
     const entry = m.listeningHistory.entries[0];
     assert.equal(entry.index, 2); assert.equal(entry.context.queue.length, 3); assert.equal(entry.context.origin.id, origin.id);
@@ -92,6 +95,29 @@ test('actual local player loads collections, controls audio, preserves queue occ
       assert.deepEqual(m.player.queue.map(track => track.id), ids, 'cancelled random lookup cannot append a stale track');
       assert.equal(m.player.randomRequesting, false);
     }
+    const gridForShuffle = { count: 0, key: 'unused', find: () => 0, song: async () => undefined };
+    m.setOrder('shuffle', () => gridForShuffle);
+    m.play([local, other, local, { ...other, rawId: '3', id: 'local:track:3' }, { ...other, rawId: '4', id: 'local:track:4' }]);
+    await settle();
+    const shuffledIds = m.listeningHistory.entries[0].context.permutation.map(index => m.player.queue[index].queueEntryId);
+    m.next(); await settle();
+    m.next(); await settle();
+    const currentId = m.player.song.queueEntryId;
+    m.moveQueue(0, 4);
+    assert.equal(m.player.song.queueEntryId, currentId, 'moving a shuffled occurrence retains the current song');
+    m.prev(); await settle();
+    assert.equal(m.player.song.queueEntryId, shuffledIds[1], 'reorder retains shuffle previous history');
+    m.next(); await settle();
+    assert.equal(m.player.song.queueEntryId, shuffledIds[2]);
+    m.removeQueue(m.player.queue.findIndex(track => track.queueEntryId === shuffledIds[4]));
+    m.next(); await settle();
+    assert.equal(m.player.song.queueEntryId, shuffledIds[3], 'removing another occurrence preserves the next shuffle song');
+    m.prev(); await settle();
+    m.removeQueue(m.player.index); await settle();
+    assert.equal(m.player.song.queueEntryId, shuffledIds[3], 'removing the current shuffle song uses its existing successor');
+    m.prev(); await settle();
+    assert.equal(m.player.song.queueEntryId, shuffledIds[1], 'current removal retains the surviving visited order');
+    m.setOrder('normal', () => gridForShuffle);
     const independentLoad = m.beginCollectionOperation('add', 'independent');
     const grid = { count: 1, key: 'separate-loading', find: () => 0, song: async () => randomTrack };
     m.jumpRandom(() => grid); m.setOrder('normal', () => grid); await settle();

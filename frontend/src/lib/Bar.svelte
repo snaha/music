@@ -45,19 +45,6 @@
       items[next]?.focus();
     } else if (e.key === 'Tab') { menu = false; key?.focus(); }
   }
-  // hot corners: the pointer pushed into a bottom screen corner opens what that corner holds, which then stays until closed:
-  // now playing on the left (when a song is loaded) and the queue toggle on the right.
-  // mouse only, and only while the bar shows
-  const touch = matchMedia('(hover: none), (pointer: coarse)').matches;
-  function atCorner(e: MouseEvent, slack: number) {
-    if (touch || hidden || e.clientY < innerHeight - slack) return '';
-    return e.clientX <= slack ? (player.song ? 'left' : '') : e.clientX >= innerWidth - slack ? 'right' : '';
-  }
-  function openCorner(c: string) { if (c === 'left' || c === 'right') player.queueOpen = true; }
-  // only entering the corner opens it: a pointer resting there must not reopen it the moment it is closed
-  // (Chrome sends a synthetic move when the layout under the pointer changes)
-  let inCorner = '';
-  function onmove(e: PointerEvent) { const now = atCorner(e, 2); if (now !== inCorner) openCorner(now); inCorner = now; }
   function onclick(e: MouseEvent) {
     const t = e.target as Node;
     if (menu && !key?.contains(t) && !panel?.contains(t)) menu = false;
@@ -74,9 +61,7 @@
   function mute() { if (volume > 0) { rememberedLocal = volume; setVolume(0); } else setVolume(rememberedLocal); }
 </script>
 
-<!-- the pointer leaves a frameless window through a corner, so the leave event counts too, with more slack -->
-<svelte:window onpointermove={onmove} {onclick} onresize={() => { if (menu) void tick().then(positionMenu); }} />
-<svelte:document onmouseleave={(e) => openCorner(atCorner(e, 24))} />
+<svelte:window {onclick} onresize={() => { if (menu) void tick().then(positionMenu); }} />
 
 {#if session.api}
   <div class="playback-world" style={palette}>
