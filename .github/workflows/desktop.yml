@@ -34,6 +34,20 @@ jobs:
           pnpm pack:mac
         working-directory: desktop
         env: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+      # portable preview: the app, a launcher and an empty Data folder in one zip; started through the launcher,
+      # the app keeps its library index, settings and passwords in that Data folder instead of ~/Library.
+      # The launcher clears the download quarantine from the app before opening it, so Gatekeeper asks once, for
+      # the launcher, instead of twice. Drop that line once builds are signed with a Developer ID and notarized.
+      - if: github.event_name == 'pull_request'
+        run: |
+          app=$(ls -d release/mac-arm64/*.app)
+          name="Music-pr-${{ github.event.number }}-portable-mac-arm64"
+          mkdir -p "portable/$name/Data"
+          cp -R "$app" "portable/$name/"
+          printf '#!/bin/zsh\nhere="$(cd -- "$(dirname -- "$0")" && pwd)"\nxattr -dr com.apple.quarantine "$here/%s" 2>/dev/null\nopen -n -a "$here/%s" --args --data-dir "$here/Data" "$@"\n' "$(basename "$app")" "$(basename "$app")" > "portable/$name/Open Music.command"
+          chmod +x "portable/$name/Open Music.command"
+          ditto -c -k --sequesterRsrc --keepParent "portable/$name" "release/$name.zip"
+        working-directory: desktop
       - uses: actions/upload-artifact@v4
         with:
           name: Music-mac-arm64
@@ -59,12 +73,23 @@ jobs:
         working-directory: desktop
       - run: pnpm dist   # navidrome + frontend + AppImage and deb
         working-directory: desktop
+      # portable preview, see the mac job; the launcher extracts the AppImage at runtime so FUSE is not needed
+      - if: github.event_name == 'pull_request'
+        run: |
+          name="Music-pr-${{ github.event.number }}-portable-linux-x64"
+          mkdir -p "portable/$name/Data"
+          cp release/*.AppImage "portable/$name/Music.AppImage"
+          printf '#!/bin/sh\nhere="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\nexport APPIMAGE_EXTRACT_AND_RUN=1\nexec "$here/Music.AppImage" --data-dir "$here/Data" "$@"\n' > "portable/$name/Open Music.sh"
+          chmod +x "portable/$name/Open Music.sh"
+          tar -czf "release/$name.tar.gz" -C portable "$name"
+        working-directory: desktop
       - uses: actions/upload-artifact@v4
         with:
           name: Music-linux-x64
           path: |
             desktop/release/*.AppImage
             desktop/release/*.deb
+            desktop/release/*.tar.gz
   # a tag push (v0.1.0 …) also publishes a GitHub release with every build attached and notes from the commits
   release:
     if: startsWith(github.ref, 'refs/tags/')
@@ -93,7 +118,7 @@ jobs:
       - run: |
           gh release delete "pr-$PR" --cleanup-tag --yes || true
           gh release create "pr-$PR" release/* --prerelease --latest=false --target "$SHA" --title "Preview of PR #$PR" \
-            --notes "Built from ${SHA::7}. Installs as **Music pr-$PR** next to the regular app, with its own library. Builds are unsigned: on a Mac, right-click the app and choose Open the first time."
+            --notes "Built from ${SHA::7}. Installs as **Music pr-$PR** next to the regular app, with its own library. Builds are unsigned: on a Mac, right-click the app and choose Open the first time. The portable zip and tar.gz keep all data in their Data folder: extract the whole folder and start Open Music.command or Open Music.sh. On a Mac the launcher is blocked once; allow it under System Settings → Privacy & Security and start it again."
           {
             echo "### Preview build for ${SHA::7}"
             echo "Installs as **Music pr-$PR** next to the regular app. All files: $(gh release view "pr-$PR" --json url -q .url)"
