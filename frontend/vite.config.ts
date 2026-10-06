@@ -9,5 +9,7 @@ const lanIp = Object.values(os.networkInterfaces()).flat()
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [svelte()],
+  // Syntax baseline; DOM APIs also need capability checks (see frontend/README.md).
+  build: { target: ['chrome111', 'firefox114', 'safari16.4'] },
   define: { __LAN_IP__: JSON.stringify(lanIp) },
 })

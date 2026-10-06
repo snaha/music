@@ -1,95 +1,248 @@
 <script lang="ts">
+  import { keyboardScope } from './keyboard';
+  import { onDestroy, onMount, untrack } from 'svelte';
+  import { createBrowseView } from './browse-view.svelte';
+  import { registerBrowseSource } from './browse-source';
+  import { readPreference, writePreference } from './preferences';
+  import Icon from './ui/icon.svelte';
+  import Button from './ui/button.svelte';
+  import Slider from './ui/slider.svelte';
+  import { toolbar } from './ui-style.svelte';
+  import LibrarySelect from './ui/library-select.svelte';
+  import ComponentStyles from './ComponentStyles.svelte';
+  import noiseBackground from './noise-background.svg';
   import { Spring } from 'svelte/motion';
-  import { library, MODES, setMode, type Tile } from './library.svelte';
-  import { player } from './player.svelte';
+  import { library, setMode, type Mode, type Tile } from './library.svelte';
   import { session } from './api.svelte';
-  import Side from './Side.svelte';
+  import CatalogSearch from './CatalogSearch.svelte';
+  import { catalogSearch, startCatalogSearch } from './catalog-search.svelte';
+  import { player, collectionPlayback } from './player.svelte';
+  import CollectionPlayback from './CollectionPlayback.svelte';
+  import DigPanel from './DigPanel.svelte';
+  import { catalog, dig, digActive, digScore, resetDig, metadata, warmColors, coverRevision } from './discovery.svelte';
+  import CollectionDetails from './CollectionDetails.svelte';
   import Settings from './Settings.svelte';
+  import { desktop } from './desktop.svelte';
   import Visualizer from './Visualizer.svelte';
   import { bg, importBackground, MATERIALS, randomBackground } from './background.svelte';
 
   let { tiles, onpick, activeId, hidden }: { tiles: Tile[]; onpick: (t: Tile) => void; activeId?: string; hidden: boolean } = $props();
 
-  // Tile styling from Figma "Frame 2" (3312px wide): 48px gaps, 16px radius, shadows. Sizes are in design
-  // units (--u = 100vw / 3312) so they scale with the window; the grid itself is full width.
-  let cols = $state(Number(localStorage.getItem('grid.cols')) || 3);
-  let gap = $state(Number(localStorage.getItem('grid.gap') ?? 48));
-  let art = $state(localStorage.getItem('art') !== '0');
-  let motion = $state(localStorage.getItem('motion') === '1'); // off by default
-  // which set of controls the top bar shows
-  const SETS = { layout: 'Layout', look: 'Look', search: 'Search' } as const;
-  let set = $state((localStorage.getItem('set') as keyof typeof SETS) || 'layout');
+  // Cover wall from Figma Current: quiet chrome, square artwork, separate open and play controls.
+  function savedNumber(key: string, fallback: number, min: number, max: number) {
+    const value = Number(readPreference(key, String(fallback)));
+    return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : fallback;
+  }
+  let cols = $state(savedNumber('grid.cols', 6, 1, 10));
+  let advancedLayout = $state(false);
+  function resizeGrid(value: number) { cols = 11 - value; gap = Math.round(24 + cols * 8); }
+  let gap = $state(savedNumber('grid.gap', 48, 0, 160));
+  // The former `art` preference filtered out albums without covers; it did not hide images.
+  let art = $state(readPreference('artwork.visible') !== '0');
+  let motion = $state(readPreference('motion') === '1'); // off by default
+  type BarMode = 'library' | 'filters' | 'layout' | 'look' | 'theme';
+  function closeModes() {
+    if (document.activeElement?.matches(':focus-visible')) document.querySelector<HTMLButtonElement>('[aria-label="Choose toolbar mode"]')?.focus();
+    toolbar.selecting = false;
+  }
+  function showMode(mode: BarMode) { toolbar.mode = mode; player.view = ''; closeModes(); }
+  function backToSelector() { player.view = ''; toolbar.selecting = true; requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.mode-options button[aria-pressed=true]')?.focus()); }
   $effect(() => {
-    localStorage.setItem('grid.cols', String(cols)); localStorage.setItem('grid.gap', String(gap));
-    localStorage.setItem('art', art ? '1' : '0'); localStorage.setItem('motion', motion ? '1' : '0');
-    localStorage.setItem('set', set);
+    writePreference('grid.cols', String(cols)); writePreference('grid.gap', String(gap));
+    writePreference('artwork.visible', art ? '1' : '0'); writePreference('motion', motion ? '1' : '0');
+    writePreference('library.source', library.source);
   });
-  // Navidrome >= 0.64 omits coverArt when no image exists, so an empty cover URL means no art
-  // the playing album always shows, even without art, so it can be found and scrolled to
-  // search set: filter as you type over title and subtitle (artist name for albums)
   let query = $state('');
-  let shown = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    return tiles.filter((t) => (!art || t.cover || t.id === activeId) && (!q || `${t.title} ${t.sub}`.toLowerCase().includes(q)));
-  });
-  $effect(() => { library.visible = shown; });
-
-  // when the playing album changes (random queue, next track), bring its cover into view
-  // that scroll is not the user's: on touch it must not show or hide the top bar, so it is ignored until the next touch
-  let scroller: HTMLDivElement, autoScroll = false;
+  let searchKind = $state('all');
+  const searching = $derived(!!query.trim());
+  const searchAccount = $derived(JSON.stringify([session.base, session.username]));
+  const catalogRevision = $derived(library.revision);
   $effect(() => {
-    if (!activeId) return;
-    autoScroll = true;
-    requestAnimationFrame(() => scroller?.querySelector('.tile.active')?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+    const term = query.trim().slice(0, 500), source = library.source;
+    session.api; searchAccount; catalogRevision;
+    return untrack(() => startCatalogSearch(term, source));
   });
+  let artistFilter = $state('');
+  let sort = $state('title'), sortDirection = $state(1), sortRevision = $state(0), randomSeed = $state(Math.random());
+  let showFilter = $state('all');
+  let collectionMode = $derived<string>(library.mode);
+  let colorOrder = $state.raw<Record<string, number>>({});
+  $effect(() => { const tiles = sourceTiles; if (sort === 'color') untrack(() => warmColors(tiles)); });
+  function applySort() { colorOrder = Object.fromEntries(sourceTiles.map(tile => [tile.id, catalog.colors[tile.id]?.hue ?? 361])); sortRevision++; filterChanged(); }
+  function sortChanged() { if (sort === 'random') randomSeed = Math.random(); applySort(); }
+  let favoritesOnly = $state(false);
+  let details = $state.raw<Tile | null>(null);
+  $effect(() => { if (player.queueOpen || player.visOpen || player.view === 'share') details = null; });
+  const currentDetails = $derived.by(() => { const selected = details; return selected ? library.tiles.find(tile => tile.id === selected.id) || selected : null; });
+  const filtersOpen = $derived(toolbar.mode === 'filters');
+  let discoveryId = $state('');
+  const activeFilters = $derived(Number(!!artistFilter) + Number(showFilter !== 'all') + Number(digActive()));
+  function discover() {
+    const candidates = shown.filter(t => t.id !== discoveryId);
+    if (!candidates.length) return;
+    const tile = candidates[Math.floor(Math.random() * candidates.length)];
+    discoveryId = tile.id;
+    const index = shown.findIndex(t => t.id === tile.id);
+    scroller?.scrollTo({ top: Math.floor(index / effectiveCols) * rowStep, behavior: 'instant' });
+  }
+  let filterHeight = $state(110);
+  $effect(() => { const mode = library.mode; untrack(() => { artistFilter = ''; if (mode === 'playlists' && sort === 'recent') sort = 'library'; }); });
+  const modeLabels: Record<Mode, string> = { albums: 'Albums', playlists: 'Playlists' };
+  const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+  const sourceTiles = $derived(tiles.filter((t) => library.source === 'all' || t.source === library.source));
+  const genres = $derived([...new Set(sourceTiles.flatMap(tile => metadata(tile).genres))].sort(collator.compare));
+  const tagged = $derived(sourceTiles.filter(tile => !!catalog.items[tile.id]?.traits).length);
+  const colorsReady = $derived(sourceTiles.filter(tile => tile.cover && catalog.colors[tile.id]?.colorReady && catalog.colors[tile.id]?.colorRevision === coverRevision(tile)).length);
+  const artists = $derived([...new Set(sourceTiles.filter((t) => t.kind === 'album').map((t) => t.sub).filter(Boolean))].sort(collator.compare));
+  const view = createBrowseView(() => ({
+    tiles, source: library.source, query, artist: artistFilter, show: showFilter, favoritesOnly,
+    sort, direction: sortDirection, randomSeed, colorOrder, digActive: digActive(),
+    metadata, score: digScore, tagged: tile => !!catalog.items[tile.id]?.traits,
+    plays: id => catalog.stats[id]?.plays || 0,
+    key: JSON.stringify([library.mode, library.source, query, artistFilter, sort, sortDirection, sortRevision,
+      randomSeed, showFilter, favoritesOnly, dig.moodOn, dig.mood, dig.energy, dig.familiarity, dig.acoustic, dig.vocal]),
+  }));
+  const shown = $derived(view.collections);
+  onMount(() => registerBrowseSource(() => searching ? catalogSearch.collections : view.collections));
+  function filterChanged() { scrollTop = 0; details = null; player.queueOpen = false; player.view = ''; scroller?.scrollTo({ top: 0 }); }
+  function changeMode(mode: Mode) { artistFilter = ''; favoritesOnly = false; filterChanged(); void setMode(mode); }
+  function changeSource() { artistFilter = ''; filterChanged(); }
+  function resetFilters() { query = ''; artistFilter = ''; library.source = 'all'; sort = 'title'; sortDirection = 1; showFilter = 'all'; favoritesOnly = false; resetDig(); filterChanged(); }
+
+  let viewportWidth = $state(innerWidth), viewportHeight = $state(innerHeight), scrollTop = $state(0);
+  const pixelGap = $derived(Math.max(0.2, gap * (viewportWidth + (innerWidth - viewportWidth)) / 3312));
+  const effectiveCols = $derived(Math.min(cols, Math.max(1, Math.floor(viewportWidth / 140))));
+  const rowStep = $derived(Math.max(1, (viewportWidth - pixelGap * (effectiveCols + 1)) / effectiveCols + pixelGap));
+  const totalRows = $derived(Math.ceil(shown.length / effectiveCols));
+  const firstRow = $derived(Math.max(0, Math.min(totalRows, Math.floor((scrollTop - filterHeight - pixelGap) / rowStep) - 2)));
+  const lastRow = $derived(Math.min(totalRows, Math.ceil((scrollTop + viewportHeight - filterHeight) / rowStep) + 3));
+  const visibleTiles = $derived(shown.slice(firstRow * effectiveCols, lastRow * effectiveCols));
+
+  let scroller: HTMLDivElement;
+  // Playback and background refreshes keep the user's scroll position.
 
   // subtle whole-grid drift with the mouse; native scroll does the rest
   const drift = new Spring({ x: 0, y: 0 }, { stiffness: 0.05, damping: 0.5 });
-  // top bar visibility. Mouse: 0 below the middle of the screen, 1 at the top edge.
-  // Touch: hidden by default; scrolling up shows it, and it stays until scrolling down or tapping an album.
-  // media query first; a real touch event also switches to touch mode in case the query misreports
+  // Both bars follow the app's idle timer. Hover, keyboard focus and open menus keep the top visible.
   const touchAtLoad = matchMedia('(hover: none), (pointer: coarse)').matches;
   let touch = $state(touchAtLoad);
-  let near = $state(touchAtLoad ? 0 : 1);
-  let lastTop = 0;
-  function ontouchstart() { autoScroll = false; if (!touch) { touch = true; near = 0; } }
-  // on touch, a tap while the bars are hidden only brings them back; it must not start a song
-  let wasHidden = false;
-  function pick(t: Tile) { if (touch) near = 0; if (touch && wasHidden) return; onpick(t); }
-  // the drawer view opened from the right menu, if any; it pins the menu open
+  function ontouchstart() { touch = true; }
+  // A dedicated play target expresses intent, even while chrome is idle.
+  function pick(t: Tile) { onpick(t); }
   let rightView = $derived(player.viewFrom === 'right' ? player.view : '');
-  // two corner keys with side panels: modes on the left, control sets (and share) on the right.
-  // top bar and side panels are one piece of chrome: same opacity, and hovering any of them lights all
-  let overChrome = $state(false);
-  let leftMenu = $state(false), leftOpen = $state(false), rightMenu = $state(false), rightOpen = $state(false);
-  let panelOpen = $derived(leftOpen || rightOpen);
-  // never fade while the pointer rests on the chrome (touch has no resting pointer, only a stale one), or while a panel is open;
-  // on touch idling never hides it, scrolling does
-  let barShown = $derived(!!rightView || overChrome || panelOpen || !((!touch && hidden) || player.queueOpen || (!touch && player.topHidden)));
-  // published sizes so a drawer can fill exactly the space between top bar, side panel and player bar.
-  // on touch the panel never takes space: the drawer spans the full width and the panel opens over it
-  let barHeight = $state(0), sideWidth = $state(0);
-  $effect(() => { document.documentElement.style.setProperty('--topbar', `${barHeight}px`); });
-  $effect(() => { document.documentElement.style.setProperty('--sidebar', `${rightOpen && !touch ? sideWidth : 0}px`); });
-  let lit = $derived(overChrome || panelOpen);
-  // a menu item opens its view beside the panel, or closes it when it is the one showing. With a mouse the menu stays open;
-  // on touch it closes so the view gets the whole width
-  function open(view: 'share' | 'settings') { player.viewFrom = 'right'; player.view = rightView === view ? '' : view; rightMenu = !touch; }
-  let chrome = $derived(lit ? 1 : near);
-  function onmove(e: PointerEvent) {
-    drift.target = motion ? { x: (e.clientX / innerWidth) * 2 - 1, y: (e.clientY / innerHeight) * 2 - 1 } : { x: 0, y: 0 };
-    if (!touch) near = Math.min(1, Math.max(0, 1 - e.clientY / (innerHeight / 2)));
+  let overBrowse = $state(false);
+  let controlsFocused = $state(false);
+  let pointerNearTop = $state(true), pointerObserved = $state(false), scrollRevealed = $state(false);
+  let scrollRevealTimer: ReturnType<typeof setTimeout> | undefined;
+  let leaveTimer: ReturnType<typeof setTimeout> | undefined;
+  const barShown = $derived(dig.open || toolbar.selecting || toolbar.mode !== 'library' || controlsFocused || !!rightView || overBrowse || scrollRevealed || (!touch && pointerObserved && pointerNearTop) || (!hidden && !player.topHidden && (touch || pointerNearTop)));
+  $effect(() => { if (!barShown) toolbar.selecting = false; });
+  $effect(() => { document.documentElement.style.setProperty('--topbar', `${filterHeight}px`); });
+  $effect(() => { document.documentElement.style.setProperty('--browsebar', `${barShown ? filterHeight : 0}px`); });
+  $effect(() => { document.documentElement.style.setProperty('--sidebar', '0px'); });
+  function chromeFocus(target: EventTarget | null) {
+    controlsFocused = target instanceof Element && !!target.closest('.browse, .library-select-menu') && target.matches(':focus-visible');
+    if (target instanceof Element && target.matches('[aria-label="Search library"]')) { details = null; toolbar.mode = 'library'; }
   }
+  let settingsTab = $state('appearance');
+  function open(view: 'settings') { settingsTab = 'appearance'; player.viewFrom = 'right'; player.view = rightView === view ? '' : view; closeModes(); }
+  async function chooseMusicFolder() {
+    try { await window.desktop!.changeFolder('add'); }
+    catch (error) { library.error = (error as Error).message; }
+  }
+  function onmove(e: PointerEvent) {
+    if (e.pointerType !== 'touch') {
+      touch = false;
+      pointerObserved = true;
+      const near = e.clientY <= (barShown ? filterHeight + 28 : 48);
+      if (near) { clearTimeout(leaveTimer); leaveTimer = undefined; pointerNearTop = true; }
+      else if (!leaveTimer && pointerNearTop) leaveTimer = setTimeout(() => { pointerNearTop = false; leaveTimer = undefined; }, 220);
+    }
+    drift.target = motion ? { x: (e.clientX / innerWidth) * 2 - 1, y: (e.clientY / innerHeight) * 2 - 1 } : { x: 0, y: 0 };
+  }
+  function revealAtTop() {
+    scrollRevealed = true;
+    clearTimeout(scrollRevealTimer);
+    scrollRevealTimer = setTimeout(() => (scrollRevealed = false), 1800);
+  }
+  onDestroy(() => { clearTimeout(leaveTimer); clearTimeout(scrollRevealTimer); });
   function onscroll(e: Event) {
-    if (!touch) return;
-    const top = (e.currentTarget as HTMLElement).scrollTop;
-    if (!autoScroll && Math.abs(top - lastTop) > 4) near = top < lastTop ? 1 : 0;
-    lastTop = top;
+    const next = (e.currentTarget as HTMLElement).scrollTop;
+    if (next < scrollTop && next <= 4) revealAtTop();
+    scrollTop = next;
   }
 </script>
 
+<div class="browse" class:hidden={!barShown} class:selecting={toolbar.selecting}
+  onpointerenter={event => (overBrowse = event.pointerType === 'mouse')} onpointerleave={() => (overBrowse = false)} bind:clientHeight={filterHeight} role="region" aria-label="Library toolbar">
+  <div class="compact-bar">
+    <label class="browse-search"><Icon name="search" /><input type="search" aria-label="Search library" placeholder="Search albums, songs, artists…" maxlength="500" bind:value={query} oninput={filterChanged} onkeydown={event => { if (event.key === 'Escape' && query) { event.preventDefault(); event.stopPropagation(); query = ''; filterChanged(); } }} aria-keyshortcuts="/ Control+k Meta+k" autocomplete="off" spellcheck="false" /></label>
+    <button class="dig-trigger" disabled={searching} title={searching ? 'Clear search to use Dig' : undefined} aria-label="Dig into your music" aria-expanded={dig.open} aria-controls="dig-controls" class:selected={dig.open || digActive()} onclick={() => { dig.open = !dig.open; toolbar.mode = 'library'; toolbar.selecting = false; }}><Icon name="dig" /><span>Dig{digActive() ? ` · ${shown.length}` : ''}</span></button>
+    <div class="library-controls" role="group" aria-label="Library filters and sorting">
+    {#if searching}
+      <div class="collection-filter"><LibrarySelect label="Search result type" bind:value={searchKind} onchange={() => scroller?.scrollTo({ top: 0 })} options={[{ value: 'all', label: 'All results' }, { value: 'song', label: 'Songs' }, { value: 'album', label: 'Albums' }, { value: 'artist', label: 'Artists' }, { value: 'playlist', label: 'Playlists' }]} /></div>
+    {:else}
+    <div class="collection-filter"><LibrarySelect label="Collection type" bind:value={collectionMode} onchange={() => { showFilter = 'all'; changeMode(collectionMode as Mode); }} options={[{ value: 'albums', label: 'Albums' }, { value: 'playlists', label: 'Playlists' }]} /></div>
+    <div class="show-filter"><LibrarySelect label="Show music" bind:value={showFilter} onchange={filterChanged} options={[{ value: 'all', label: 'All music' }, { value: 'favorites', label: 'Favorites' }, { value: 'mood', label: 'Tagged for Dig' }, ...genres.map(genre => ({ value: `genre:${genre}`, label: genre }))]} /></div>
+    <div class="sort-filter"><LibrarySelect label="Sort library" bind:value={sort} onchange={sortChanged} options={[{ value: 'title', label: 'Album title' }, { value: 'artist', label: 'Artist name' }, { value: 'year', label: 'Release year' }, { value: 'plays', label: 'Number of plays' }, { value: 'color', label: 'Cover color' }, { value: 'random', label: 'Random order' }, { value: 'recent', label: 'Recently added' }, { value: 'library', label: 'Library order' }]} /></div>
+    <button class="sort-direction icon-button" aria-label="Reverse sort order" aria-pressed={sortDirection === -1} disabled={sort === 'random'} title="Reverse sort order" onclick={() => { sortDirection *= -1; applySort(); }}><Icon name="sort" /></button>
+    {/if}
+    </div>
+    <label class="inline-size"><Icon name="display" /><Slider type="single" min={1} max={10} step={1} value={11 - cols} onValueChange={resizeGrid} aria-label="Grid size" /></label>
+    <div class="bar-modes" class:expanded={toolbar.selecting}>
+      <button class="icon-button" aria-label="Choose toolbar mode" aria-expanded={toolbar.selecting} aria-controls="toolbar-mode-options" title="Display options" onclick={() => (toolbar.selecting = !toolbar.selecting)}><Icon name="filter" /></button>
+      <div class="mode-options" id="toolbar-mode-options" use:keyboardScope={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeModes(); } }} inert={!toolbar.selecting}>
+        {#each [['library', 'Library'], ['filters', 'Filters'], ['layout', 'Layout'], ['look', 'Background'], ['theme', 'Theme']] as [mode, label] (mode)}
+          <button aria-label={label === 'Filters' ? 'Library filters' : label} aria-pressed={toolbar.mode === mode} onclick={() => showMode(mode as BarMode)}>{label}</button>
+        {/each}
+      </div>
+    </div>
+    <button class="icon-button settings-trigger" aria-label="Settings" aria-pressed={player.view === 'settings'} title="Settings" onclick={() => open('settings')}><Icon name="settings" /></button>
+  </div>
+  {#if dig.open && !searching}<DigPanel matches={shown.length} total={sourceTiles.length} {tagged} onrandom={discover} />{/if}
+  {#if toolbar.mode !== 'library'}
+    <div class="secondary-controls"><button class="icon-button" aria-label="Back to library" onclick={() => { toolbar.mode = 'library'; toolbar.selecting = false; }}><Icon name="back" /></button>
+    {#if filtersOpen}
+      <div class="filter-tray">
+        {#if !searching && library.mode === 'albums'}<LibrarySelect label="Filter by artist" bind:value={artistFilter} onchange={filterChanged} options={[{ value: '', label: 'All artists' }, ...artists.map(name => ({ value: name, label: name }))]} />{/if}
+        <Button variant="ghost" size="sm" onclick={resetFilters}><Icon name="reset" /> Reset filters</Button>
+        <span class="library-count">{searching ? 'Search covers every collection type' : `${shown.length} of ${sourceTiles.length} ${library.mode}`}</span>
+      </div>
+    {:else if toolbar.mode === 'layout'}
+      <div class="controls">
+        {#if advancedLayout}<label class="slider-control"><span>Columns</span><Slider type="single" min={1} max={10} step={1} value={cols} onValueChange={value => (cols = value)} aria-label="Album columns" /><output>{cols}</output></label><label class="slider-control"><span>Gap</span><Slider type="single" min={0} max={160} step={1} value={gap} onValueChange={value => (gap = value)} aria-label="Album spacing" /><output>{gap}</output></label>
+        {:else}<label class="slider-control"><span>Grid size</span><Slider type="single" min={1} max={10} step={1} value={11 - cols} onValueChange={resizeGrid} aria-label="Advanced grid size" /><output>{effectiveCols} across</output></label>{/if}
+        <Button variant="outline" size="sm" aria-pressed={advancedLayout} onclick={() => (advancedLayout = !advancedLayout)}>{advancedLayout ? 'Simple' : 'Advanced'}</Button>
+      </div>
+    {:else if toolbar.mode === 'look'}
+      <div class="controls"><span class="group" role="radiogroup" aria-label="Background">{#each Object.entries(MATERIALS) as [key, label] (key)}<button class="opt" class:on={bg.material === key} role="radio" aria-checked={bg.material === key} disabled={key === 'custom' && !bg.custom} onclick={() => (bg.material = key as keyof typeof MATERIALS)}>{label}</button>{/each}<button class="opt" onclick={randomBackground}>Random</button></span></div>
+    {:else if toolbar.mode === 'theme'}<ComponentStyles />{/if}
+    </div>
+  {/if}
+  {#if sort === 'color'}<div class="color-status" role="status">{catalog.colorsLoading ? `Reading cover colors · ${colorsReady} ready` : 'Cover colors ready'}<button disabled={catalog.colorsLoading} onclick={applySort}>Apply color sort</button></div>{/if}
+</div>
+
+{#snippet collectionCard(t: Tile)}
+      {@const playback = collectionPlayback(t)}
+      <div class="tile-wrap" class:discovered={t.id === discoveryId} class:current={playback.current} class:listening={playback.listening}>
+        <button class="tile" class:active={playback.listening} onclick={() => { details = t; player.queueOpen = false; player.view = ''; }} aria-label="Open {t.title} — {t.sub}" aria-current={playback.current ? 'true' : undefined}>
+          {#if art && t.cover}<img src={t.cover} alt="" loading="lazy" draggable="false" />{:else}<span class="fallback">{t.title}</span>{/if}
+        </button>
+        <div class="tile-play"><CollectionPlayback collection={t} compact onplay={() => { if (!t.available) details = t; else pick(t); }} /></div>
+        <div class="tile-info"><span class="tile-title">{t.title}<small>{t.sub}</small></span></div>
+      </div>
+{/snippet}
+
 <!-- an image dropped anywhere becomes the custom background -->
-<svelte:window onpointermove={onmove} {ontouchstart} onpointerdowncapture={() => (wasHidden = hidden)}
+<svelte:window onkeydown={e => {
+  if (e.key !== 'Escape' || e.defaultPrevented || player.view || player.queueOpen || player.visOpen) return;
+  if (details) details = null;
+  else if (dig.open) { dig.open = false; document.querySelector<HTMLButtonElement>('[aria-label="Dig into your music"]')?.focus(); }
+  else if (toolbar.mode !== 'library') { backToSelector(); document.querySelector<HTMLButtonElement>('[aria-label="Choose toolbar mode"]')?.focus(); }
+  else return;
+  e.preventDefault();
+}} onpointermove={onmove} {ontouchstart}
+  onfocusin={(e) => chromeFocus(e.target)} onfocusout={(e) => chromeFocus(e.relatedTarget)}
   ondragover={(e) => e.preventDefault()} ondrop={(e) => { e.preventDefault(); const f = e.dataTransfer?.files[0]; if (f) importBackground(f); }} />
 
 <!-- the visualizer as background sits behind everything; the fullscreen one replaces it while open -->
@@ -97,66 +250,47 @@
 
 <!-- the material sits on the cards' layer so it scrolls and drifts with them, or on the fixed viewport behind them -->
 <div class="scroll" class:fill={!bg.tile} class:m-vinyl={!bg.scroll && bg.material === 'vinyl'} class:m-grille={!bg.scroll && bg.material === 'grille'}
-  class:m-fabric={!bg.scroll && bg.material === 'fabric'} class:m-custom={!bg.scroll && bg.material === 'custom'} style:--custom={bg.custom ? `url("${bg.custom}")` : 'none'} {onscroll} bind:this={scroller}>
+  class:m-fabric={!bg.scroll && bg.material === 'fabric'} class:m-custom={!bg.scroll && (bg.material === 'custom' || bg.material === 'noise')} style:--custom={bg.material === 'noise' ? `url("${noiseBackground}")` : bg.custom ? `url("${bg.custom}")` : 'none'} {onscroll} onwheel={(e) => { if (e.deltaY < 0 && scrollTop <= 4) revealAtTop(); }} bind:this={scroller} bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
+  {#if searching}
+    <CatalogSearch bind:kind={searchKind} top={filterHeight} cols={effectiveCols} gap={pixelGap} card={collectionCard}
+      onclear={() => { query = ''; filterChanged(); }}
+      onartist={artist => { query = ''; filterChanged(); onpick(artist); }} />
+  {:else}
   <div class="grid" class:m-vinyl={bg.scroll && bg.material === 'vinyl'} class:m-grille={bg.scroll && bg.material === 'grille'}
-    class:m-fabric={bg.scroll && bg.material === 'fabric'} class:m-custom={bg.scroll && bg.material === 'custom'} style:--cols={cols} style:--gap="max(0.2px, calc({gap} * var(--u)))"
+    class:m-fabric={bg.scroll && bg.material === 'fabric'} class:m-custom={bg.scroll && (bg.material === 'custom' || bg.material === 'noise')} style:--cols={effectiveCols} style:--gap="max(0.2px, calc({gap} * var(--u)))"
+    style:padding-top="{filterHeight + pixelGap + firstRow * rowStep}px" style:padding-bottom="calc(var(--botbar, 60px) + {pixelGap + (totalRows - lastRow) * rowStep}px)"
     style:transform="translate3d({drift.current.x * -8}px, {drift.current.y * -6}px, 0)">
-    {#each shown as t (t.id)}
-      <button class="tile" class:active={t.id === activeId} onclick={() => pick(t)} aria-label="{t.title} — {t.sub}">
-        <img src={t.cover} alt={t.title} loading="lazy" draggable="false" />
-        <i></i>
-      </button>
+    {#each visibleTiles as t (t.id)}
+      {@render collectionCard(t)}
     {/each}
   </div>
+  {/if}
 </div>
 
-<div class="controls" role="toolbar" tabindex="-1" aria-label="Controls" class:hidden={!barShown} class:lit style:--chrome={chrome} style:pointer-events={barShown && chrome > 0.05 ? 'auto' : 'none'}
-  bind:clientHeight={barHeight} onpointerenter={() => (overChrome = !touch)} onpointerleave={() => (overChrome = false)}>
-  {#if set === 'layout'}
-    <label>columns <input type="range" min="1" max="10" bind:value={cols} /> {cols}</label>
-    <label>gap <input type="range" min="0" max="160" bind:value={gap} /> {gap}</label>
-  {:else if set === 'search'}
-    <span class="find">
-      <input type="text" placeholder="search" bind:value={query} spellcheck="false" autocomplete="off" aria-label="Search"
-        onkeydown={(e) => { if (e.key === 'Escape') query = ''; }} {@attach (el) => el.focus()} />
-      {#if query}
-        <button class="clear" onclick={() => (query = '')} aria-label="Clear search">
-          <svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-        </button>
-      {/if}
-    </span>
-  {:else}
-    <span class="group" role="radiogroup" aria-label="Background">
-      <span class="name">background</span>
-      {#each Object.entries(MATERIALS) as [key, label] (key)}
-        <button class="opt" class:on={bg.material === key} role="radio" aria-checked={bg.material === key} disabled={key === 'custom' && !bg.custom}
-          title={key === 'custom' && !bg.custom ? 'import one in settings' : undefined} onclick={() => (bg.material = key as keyof typeof MATERIALS)}>{label}</button>
-      {/each}
-      <button class="opt" onclick={randomBackground} title="one of the bundled sample backgrounds">random</button>
-    </span>
-  {/if}
-  <!-- left corner: which part of the library the grid shows -->
-  <Side side="left" label={library.mode} {touch} bind:menu={leftMenu} bind:open={leftOpen}>
-    {#each MODES as m (m)}
-      <button role="menuitem" tabindex={leftOpen ? 0 : -1} class:on={library.mode === m} onclick={() => { setMode(m); leftMenu = false; }}>{m}</button>
-    {/each}
-  </Side>
-  <!-- right corner: which set of controls the bar shows, and the share and settings views -->
-  <Side side="right" label={SETS[set]} {touch} pinned={!!rightView && !touch} onunpin={() => (player.view = '')} bind:menu={rightMenu} bind:open={rightOpen} bind:width={sideWidth}>
-    {#each Object.entries(SETS) as [key, label] (key)}
-      <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={set === key} onclick={() => { set = key as keyof typeof SETS; player.view = ''; rightMenu = false; }}>{label}</button>
-    {/each}
-    <span class="rule"></span>
-    {#if session.admin}
-      <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={rightView === 'share'} onclick={() => open('share')}>Share</button>
+{#if !searching && !shown.length && !library.loading}
+  <div class="empty-library">
+    {#if window.desktop && !library.tiles.length && !desktop.status?.musicFolder}
+      <h2>Your music starts here.</h2>
+      <p>Add a music folder to start your collection.</p>
+      <button onclick={chooseMusicFolder}>Add music folder</button>
+    {:else if window.desktop && desktop.status?.musicFolder && !library.tiles.length && library.mode === 'albums'}
+      <p>{library.scan.error || library.error ? 'Your music folder could not be loaded.' : !library.scan.checked ? 'Checking your music folder…' : library.scan.scanning ? 'Your collection is being indexed. Albums will appear here as they’re found.' : 'No music was found in this folder.'}</p>
+      {#each desktop.status.musicFolders as folder (folder)}<p style:overflow-wrap="anywhere">{folder}</p>{/each}
+      <button onclick={chooseMusicFolder}>Add music folder</button>
+    {:else}
+      <p>{library.scan.scanning ? 'Your collection is being indexed. Albums will appear here as they’re found.' : 'No music matches this view.'}</p>
+      {#if digActive()}<p>Add mood and sound tags from an album’s menu, or clear Dig to see all music.</p><button onclick={resetDig}>Clear Dig</button>{:else if !library.scan.scanning}<button onclick={resetFilters}>Reset filters</button>{/if}
     {/if}
-    <button role="menuitem" tabindex={rightOpen ? 0 : -1} class:on={rightView === 'settings'} onclick={() => open('settings')}>Settings</button>
-  </Side>
-</div>
+  </div>
+{/if}
+
 
 {#if library.scan.scanning}<div class="scan">indexing… {library.scan.count} songs</div>{/if}
+{#if library.loading}<div class="library-status" role="status">Loading music…</div>{/if}
+{#if currentDetails}{#key currentDetails.id}<CollectionDetails tile={currentDetails} onclose={() => (details = null)} />{/key}{/if}
+{#if library.error || library.scan.error}<div class="library-status" role="alert">{library.error || library.scan.error}</div>{/if}
 
-{#if player.view === 'settings'}<Settings bind:art bind:motion onclose={() => (player.view = '')} />{/if}
+{#if player.view === 'settings'}<Settings bind:art bind:motion initialTab={settingsTab} onclose={() => (player.view = '')} />{/if}
 
 <style>
   .scroll {
@@ -166,7 +300,7 @@
     --sheen: repeating-linear-gradient(105deg, #fff0 0, #ffffff0a 160px, #ffffff16 270px, #ffffff0a 380px, #fff0 520px,
         #fff0 780px, #ffffff0a 920px, #ffffff16 1030px, #ffffff0a 1140px, #fff0 1300px, #fff0 1400px);
   }
-  .grid { display: grid; grid-template-columns: repeat(var(--cols), 1fr); gap: var(--gap); padding: var(--gap) var(--gap) 140px; min-height: 100%; box-sizing: border-box; will-change: transform; }
+  .grid { display: grid; grid-template-columns: repeat(var(--cols), 1fr); gap: var(--gap); padding: calc(var(--topbar, 52px) + var(--gap)) var(--gap) calc(var(--botbar, 60px) + var(--gap)); min-height: 100%; box-sizing: border-box; will-change: transform; }
   /* custom: the imported image as authored, repeated at its own size or stretched to cover */
   .m-custom { background: var(--custom) center / auto repeat #000; }
   .fill .m-custom, .fill.m-custom { background-size: cover; background-repeat: no-repeat; }
@@ -192,82 +326,71 @@
       var(--sheen),
       linear-gradient(#141414, #0e0e0e);
   }
-  .tile {
-    all: unset; position: relative; cursor: pointer; aspect-ratio: 1; background: #111;
-    border-radius: 1px; overflow: hidden;
-    box-shadow: 0 3px 5px -2px rgba(0, 0, 0, 0.8); /* light from top: shadow below only */
-    transition: transform 200ms cubic-bezier(.2,.8,.2,1), box-shadow 200ms;
-  }
-  /* alt text stays for screen readers but is not painted in the browser's default style when a cover fails */
-  .tile img { width: 100%; height: 100%; object-fit: cover; display: block; user-select: none; color: transparent; font-size: 0; }
-  /* glossy vinyl-paper sleeve: paper grain, a broad laminate reflection with a faint second band,
-     faint lit top-left edge and shaded bottom-right edge */
-  .tile i { position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-    background:
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 160px 160px,
-      linear-gradient(115deg, #fff0 0%, #fff0 18%, rgba(255, 255, 255, 0.11) 30%, rgba(255, 255, 255, 0.04) 42%, #fff0 50%,
-        #fff0 62%, rgba(255, 255, 255, 0.06) 70%, #fff0 78%),
-      linear-gradient(165deg, rgba(255, 255, 255, 0.10) 0%, #fff0 40%, rgba(0, 0, 0, 0.10) 100%);
-    box-shadow:
-      inset 1px 1px 0 rgba(255, 255, 255, 0.07),
-      inset -1px -1px 0 rgba(0, 0, 0, 0.2);
-    transition: opacity 200ms; }
-  .tile:hover, .tile:focus-visible { z-index: 1;
-    box-shadow: 0 6px 8px -3px rgba(0, 0, 0, 0.85); }
-  .tile:hover i { opacity: .7; }
-  .tile.active { box-shadow: 0 0 0 2px #fff, 0 0 50px #fff5; }
-  .controls {
-    /* sizes scale with the viewport between phone and desktop */
-    --s: clamp(0.5px, 100vw / 1600, 1px);
-    /* one fixed height for every control set so switching never jumps; --bar-rows scales it (2, 3 …) later */
-    --bar-rows: 1;
-    position: fixed; top: 0; left: 0; right: 0; box-sizing: border-box; min-height: calc(96 * var(--s) * var(--bar-rows));
-    display: flex; flex-wrap: wrap; justify-content: center; align-items: center; align-content: center;
-    gap: calc(12 * var(--s)) calc(36 * var(--s));
-    color: #fff; font-size: calc(24 * var(--s));
-    padding: calc(8 * var(--s)) calc(20 * var(--s)); background: rgba(0, 0, 0, 0.6);
-    letter-spacing: .08em; text-transform: uppercase; opacity: var(--chrome, 1); user-select: none;
-    transition: opacity 150ms, background 200ms; z-index: 2;
-  }
-  .controls.lit { background: rgba(0, 0, 0, 0.78); } /* a bit darker while hovered or a panel is open */
-  @media (hover: none), (pointer: coarse) { .controls { transition: opacity 450ms, background 200ms; } }
-  .controls.hidden { opacity: 0; pointer-events: none; }
-  /* scan progress while navidrome indexes the folder (first run, new files) */
-  .scan { position: fixed; left: 50%; bottom: 130px; transform: translateX(-50%); padding: 8px 16px; border-radius: 4px;
-    background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 14px; letter-spacing: .12em; text-transform: uppercase; pointer-events: none; z-index: 2; }
-  .controls label { display: flex; align-items: center; gap: calc(16 * var(--s)); }
-  /* look set: a row of labelled options */
-  .group { display: flex; align-items: center; gap: calc(10 * var(--s)); }
-  .name { margin-right: calc(8 * var(--s)); opacity: .7; }
-  .controls .opt { all: unset; cursor: pointer; padding: calc(4 * var(--s)) calc(12 * var(--s)); border: 1px solid #fff5; border-radius: 3px; opacity: .6; }
-  .controls .opt:hover { opacity: 1; }
-  .controls .opt:disabled { opacity: .25; cursor: default; }
-  .controls .opt.on { opacity: 1; background: #fff; color: #000; border-color: #fff; }
-  /* search set: bare underlined field with a white caret; the clear key appears once there is text */
-  .find { position: relative; display: flex; align-items: center; }
-  .controls input[type=text] {
-    width: calc(420 * var(--s)); height: auto; padding: calc(6 * var(--s)) calc(36 * var(--s)) calc(6 * var(--s)) 0;
-    border: 0; border-bottom: 1px solid #fff6; border-radius: 0; background: none; color: #fff; caret-color: #fff;
-    font: inherit; letter-spacing: inherit; text-transform: none; outline: none; cursor: text; transition: border-color 150ms;
-  }
-  .controls input[type=text]:focus { border-bottom-color: #fff; }
-  .controls input[type=text]::placeholder { color: #fff6; text-transform: uppercase; }
-  .controls .clear { all: unset; cursor: pointer; position: absolute; right: 0; display: flex; padding: calc(6 * var(--s)); opacity: .6; }
-  .controls .clear:hover { opacity: 1; }
-  /* same thin slider in every browser; Firefox's default range is large */
-  .controls input { appearance: none; width: calc(240 * var(--s)); height: calc(32 * var(--s)); margin: 0; background: none; cursor: pointer; }
-  .controls input::-webkit-slider-runnable-track { height: 4px; background: #fff6; }
-  .controls input::-moz-range-track { height: 4px; background: #fff6; }
-  .controls input::-webkit-slider-thumb { appearance: none; width: calc(24 * var(--s)); height: calc(24 * var(--s));
-    margin-top: calc(2px - 12 * var(--s)); border-radius: 50%; background: #fff; }
-  .controls input::-moz-range-thumb { width: calc(24 * var(--s)); height: calc(24 * var(--s)); border: 0; border-radius: 50%; background: #fff; }
-  /* phones: the first row holds just the two corner keys, the controls sit in rows below. Every row is one bar unit
-     (96): each control is --h tall with the rest of the unit between rows, so controls that don't fit add a whole unit */
+
+  .browse { position: fixed; inset: 0 0 auto; z-index: 6; color: var(--ui-text); background: var(--ui-surface); border-bottom: 1px solid var(--ui-border); font: 12px/1.4 var(--ui-font); transition: transform 180ms ease-out, opacity 140ms ease-out; }
+  .browse.hidden { opacity: 0; transform: translateY(-100%); pointer-events: none; }
+  .compact-bar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; min-height: 52px; box-sizing: border-box; }
+  .browse button { font: inherit; color: inherit; cursor: pointer; border: 0; background: transparent; border-radius: 4px; }
+  .browse button:hover { background: var(--ui-muted); } .browse button:disabled { opacity: .4; cursor: default; }
+  .browse :is(input, button):focus-visible { outline: 2px solid var(--ui-text); outline-offset: 2px; }
+  .browse-search { display: flex; align-items: center; gap: 7px; padding: 0 9px; min-width: 110px; flex: 1; background: var(--ui-muted); border: 1px solid var(--ui-border); border-radius: 4px; }
+  .browse-search :global(svg) { width: 16px; height: 16px; }
+  .browse-search input { width: 100%; min-width: 0; min-height: 32px; padding: 6px 0; border: 0; color: inherit; background: transparent; font: inherit; }
+  :global(:root) .browse .browse-search input[type=search] { border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: 6px 0; }
+  :global(:root) .browse .browse-search input[type=search]::placeholder { color: var(--ui-text-muted); opacity: 1; }
+  :global(:root) .browse .browse-search input[type=search]:focus-visible { outline: none; }
+  .browse-search:focus-within { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+  .dig-trigger { display: flex; gap: 5px; align-items: center; min-height: 34px; padding: 5px 9px; white-space: nowrap; }
+  .dig-trigger.selected { background: var(--ui-muted); }
+  .compact-bar :global(.library-select-field) { width: 145px; min-width: 110px; border-radius: 4px; }
+  .library-controls { display: contents; }
+  .collection-filter :global(.library-select-field) { width: 105px; min-width: 90px; }
+  .compact-bar :global(.library-select-field input) { height: 32px; padding: 6px 8px; font-size: 12px; }
+  .icon-button { display: grid; place-items: center; flex: 0 0 34px; width: 34px; min-height: 34px; padding: 0; }
+  .inline-size { display: flex; align-items: center; gap: 8px; flex: 0 0 140px; } .inline-size :global(svg) { width: 16px; height: 16px; } .inline-size :global([data-slot=slider]) { width: 100%; min-width: 70px; }
+  .bar-modes { position: relative; }
+  .mode-options { position: absolute; top: calc(100% + 8px); right: 0; width: 180px; padding: 6px; display: flex; flex-direction: column; background: var(--ui-surface); box-shadow: 0 10px 25px #0005; border-radius: 4px; opacity: 0; visibility: hidden; pointer-events: none; }
+  .expanded .mode-options { opacity: 1; visibility: visible; pointer-events: auto; }
+  .mode-options button { min-height: 40px; padding: 8px 12px; text-align: left; } .mode-options button[aria-pressed=true] { background: var(--ui-muted); }
+  .secondary-controls { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--ui-border); }
+  .filter-tray, .controls { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; flex-wrap: wrap; }
+  .library-count { margin-left: auto; color: var(--ui-text-muted); } .slider-control { display: flex; align-items: center; gap: 12px; min-width: 240px; }
+  .slider-control :global([data-slot=slider]) { flex: 1; } output { font-variant-numeric: tabular-nums; min-width: 3ch; }
+  .group { display: flex; flex-wrap: wrap; gap: 6px; } .group button { padding: 8px 12px; min-height: 36px; } .group button.on { background: var(--ui-muted); }
+  .color-status { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 14px; color: var(--ui-text-muted); border-top: 1px solid var(--ui-border); }
+  .color-status button { color: var(--ui-text); min-height: 32px; padding: 4px 8px; text-decoration: underline; text-underline-offset: 3px; }
+  .tile-wrap { position: relative; isolation: isolate; aspect-ratio: 1; min-width: 0; }
+  .tile { all: unset; display: block; cursor: pointer; position: relative; width: 100%; height: 100%; overflow: hidden; background: #191919; border-radius: 2px; box-shadow: 0 3px 6px #0004; }
+  .tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .tile:focus-visible { outline: 2px solid white; outline-offset: 3px; }
+  .tile-wrap:hover .tile, .tile-wrap:focus-within .tile { outline: 1px solid #fff; outline-offset: -1px; box-shadow: 0 4px 18px #0009; }
+  .tile-wrap.listening .tile { outline: 3px solid #fff; outline-offset: -3px; }
+  .tile-play { position: absolute; z-index: 3; top: 6px; right: 6px; opacity: 0; pointer-events: none; }
+  .tile-wrap:hover .tile-play, .tile-wrap:focus-within .tile-play, .tile-wrap.current .tile-play { opacity: 1; pointer-events: auto; }
+  .tile-info { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; padding: 30px 10px 9px; display: flex; align-items: flex-end; gap: 8px; background: linear-gradient(transparent, #000e); color: white; pointer-events: none; opacity: 0; transition: opacity 120ms ease-out; font: 12px/1.3 var(--ui-font); }
+  .tile-wrap:hover .tile-info, .tile-wrap:focus-within .tile-info, .discovered .tile-info { opacity: 1; }
+  .tile-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tile-title small { display: block; overflow: hidden; text-overflow: ellipsis; color: #dedede; font-size: 11px; margin-top: 3px; }
+  .discovered { outline: 2px solid var(--ui-text); outline-offset: 3px; }
+  .fallback { display: grid; place-items: center; height: 100%; padding: 16px; box-sizing: border-box; color: #ddd; text-align: center; }
+  .empty-library { position: fixed; inset: 35% 10% auto; text-align: center; color: var(--ui-text); font: 16px/1.5 var(--ui-font); }
+  .empty-library p + p { color: var(--ui-text-muted); font-size: 13px; } .empty-library button { color: inherit; background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: 4px; padding: 10px 14px; cursor: pointer; font: inherit; margin: 4px; }
+  .empty-library h2 { margin: 0 0 12px; font-size: 24px; font-weight: 600; letter-spacing: -.025em; }
+  .empty-library button { min-height: 44px; }
+  .empty-library button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
+  .library-status, .scan { position: fixed; left: 16px; bottom: 90px; max-width: min(650px, calc(100vw - 32px)); padding: 8px 12px; box-sizing: border-box; color: var(--ui-text); background: var(--ui-surface); z-index: 3; font: 12px/1.5 var(--ui-font); }
+  @media (max-width: 1100px) { .inline-size { flex-basis: 100px; } .compact-bar { gap: 5px; padding-inline: 10px; } .compact-bar :global(.library-select-field) { width: 120px; min-width: 100px; } .collection-filter :global(.library-select-field) { width: 95px; min-width: 85px; } }
   @media (max-width: 700px) {
-    .controls { --h: calc(44 * var(--s)); --row-gap: calc(96 * var(--s) - var(--h));
-      padding: calc(96 * var(--s) + var(--row-gap) / 2) calc(20 * var(--s)) calc(var(--row-gap) / 2); row-gap: var(--row-gap); }
-    .controls label, .find, .group > * { height: var(--h); box-sizing: border-box; }
-    .group { flex-wrap: wrap; justify-content: center; row-gap: var(--row-gap); }
-    .controls .opt { display: flex; align-items: center; height: var(--h); box-sizing: border-box; } /* its all: unset drops the rule above */
+    .compact-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 6px; padding: 8px 10px; }
+    .browse-search { grid-column: 1; grid-row: 1; } .dig-trigger { grid-column: 2; grid-row: 1; min-height: 44px; }
+    .bar-modes { grid-column: 3; grid-row: 1; } .settings-trigger { grid-column: 4; grid-row: 1; }
+    .library-controls { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--ui-border) transparent; padding: 2px 0 5px; }
+    .collection-filter { flex: 0 0 100px; } .show-filter, .sort-filter { flex: 0 0 128px; } .sort-direction { flex: 0 0 44px; } .inline-size { display: none; }
+    .compact-bar :global(.library-select-field) { width: 100%; min-width: 0; box-sizing: border-box; } .compact-bar :global(.library-select-field input) { height: 40px; }
+    .browse-search input { min-height: 40px; } .icon-button { min-width: 44px; min-height: 44px; } .sort-direction { width: 44px; }
+    .secondary-controls { align-items: flex-start; } .filter-tray, .controls { gap: 10px; } .filter-tray :global(.library-select-field) { flex: 1; min-width: 150px; width: auto; } .slider-control { min-width: 0; width: 100%; } .library-count { margin: 0; }
+    .mode-options { right: -40px; } .color-status { font-size: 11px; flex-wrap: wrap; justify-content: flex-start; }
+    .tile-info { font-size: 11px; } .tile-title small { font-size: 10px; } .tile-play { top: 4px; right: 4px; }
   }
+  @media (hover: none) { .tile-play { opacity: 1; pointer-events: auto; } }
+  @media (prefers-reduced-motion: reduce) { .browse, .browse.hidden, .tile-info { transition: none; transform: none; } }
 </style>

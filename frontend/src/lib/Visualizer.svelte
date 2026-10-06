@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { audioGraph, player } from './player.svelte';
+  import { audioGraph, player, next as nextTrack, prev as previousTrack } from './player.svelte';
 
   // background: behind the grid instead of fullscreen; no keys, no click to close, and half resolution so the
   // grid keeps scrolling at full rate on top of it
@@ -33,7 +33,9 @@
   // Milkdrop keys: Space next (blend), H hard cut, Backspace previous, R toggle cycling, Scroll Lock lock, T song title
   function onkeydown(e: KeyboardEvent) {
     if (background) return;
-    if (e.key === ' ') next(2.7, true);
+    if (e.key === 'ArrowRight') nextTrack();
+    else if (e.key === 'ArrowLeft') previousTrack();
+    else if (e.key === ' ') next(2.7, true);
     else if (e.key === 'h' || e.key === 'H') next(0, true);
     else if (e.key === 'Backspace') prev();
     else if (e.key === 'r' || e.key === 'R') setCycling(!cycling);
@@ -46,13 +48,14 @@
 
   onMount(() => {
     if (!document.createElement('canvas').getContext('webgl2')) { error = 'WebGL2 is not available in this browser'; return; }
-    let raf = 0;
+    let raf = 0, disposed = false;
     const { ctx, node } = audioGraph();
-    const dpr = background ? 0.5 : devicePixelRatio || 1;
+    const dpr = Math.min(background ? 0.5 : devicePixelRatio || 1, 1920 / innerWidth);
     const size = () => { canvas.width = innerWidth * dpr; canvas.height = innerHeight * dpr; vis?.setRendererSize(innerWidth * dpr, innerHeight * dpr); };
     size();
     // engine and presets are loaded only when the visualizer opens; they are heavy
     Promise.all([import('butterchurn'), import('butterchurn-presets')]).then(([bc, pk]) => {
+      if (disposed) return;
       presets = pk.default.getPresets(); names = Object.keys(presets);
       // the 2.4.7 preset pack is precompiled JS, so onlyUseWASM would reject every preset
       vis = bc.default.createVisualizer(ctx, canvas, {
@@ -69,7 +72,7 @@
     const onfs = () => { if (!background && !document.fullscreenElement) player.visOpen = false; };
     document.addEventListener('fullscreenchange', onfs);
     return () => {
-      cancelAnimationFrame(raf); clearInterval(cycleTimer); clearTimeout(nameTimer); ro.disconnect();
+      disposed = true; cancelAnimationFrame(raf); clearInterval(cycleTimer); clearTimeout(nameTimer); ro.disconnect();
       document.removeEventListener('fullscreenchange', onfs);
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       vis?.disconnectAudio(node); // butterchurn has no destroy(); dropping the refs is the cleanup
@@ -86,7 +89,7 @@
 </div>
 
 <style>
-  .vis { position: fixed; inset: 0; background: #000; z-index: 3; cursor: none; }
+  .vis { position: fixed; inset: 0; background: #000; z-index: 20; cursor: none; }
   .vis.bg { z-index: -1; cursor: auto; pointer-events: none; }
   canvas { width: 100%; height: 100%; display: block; }
   .name { position: absolute; left: 20px; bottom: 16px; color: #fff; opacity: .6; font-size: 12px; letter-spacing: .1em; text-shadow: 0 1px 4px #000; }

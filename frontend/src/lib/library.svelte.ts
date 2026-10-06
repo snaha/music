@@ -1,119 +1,181 @@
-import type { AlbumID3, ArtistID3, Child, Playlist } from 'subsonic-api';
-import { coverUrl, ok, session } from './api.svelte';
-import { play, type Grid } from './player.svelte';
+import type { ScanStatus } from 'subsonic-api';
+import { ok, session } from './api.svelte';
+import { appendToSession, enqueue, play, player, beginCollectionOperation, queueSession, type Grid } from './player.svelte';
+import { type Collection, type Track } from './music';
+import { album, playlist, localTrack, localCatalog } from './local-catalog';
+export { album, playlist, localTrack } from './local-catalog';
+import { browseCollections } from './browse-source';
 
-// count: songs behind the tile, for numbering the grid's songs (an artist counts as one, see grid())
-export type Tile = { id: string; cover: string; title: string; sub: string; kind: 'album' | 'artist' | 'playlist'; count: number };
-export const MODES = ['albums', 'recent', 'random', 'starred', 'artists', 'playlists'] as const;
+export type Tile = Collection;
+export const MODES = ['albums', 'playlists'] as const;
 export type Mode = (typeof MODES)[number];
+class LibraryState {
+  mode = $state<Mode>('albums');
+  tiles = $state.raw<Tile[]>([]);
+  revision = $state(0);
+  loading = $state(false);
+  error = $state('');
+  source = $state<'all' | 'local'>('all');
+  scan = $state({ scanning: false, count: 0, checked: false, error: '' });
+}
+export const library = new LibraryState();
+let localTiles: Tile[] = [], req = 0, pickRequest = 0, listing = true;
 
-// visible: what the grid shows after the search and art filters; random picks come from these
-export const library = $state({ mode: 'albums' as Mode, tiles: [] as Tile[], visible: [] as Tile[], loading: false, scan: { scanning: false, count: 0 } });
+function publish(preserve: boolean) {
+  const next = localTiles;
+  if (preserve) {
+    const map = new Map(next.map((t) => [t.id, t]));
+    const old = new Set(library.tiles.map((t) => t.id));
+    library.tiles = [...library.tiles.filter((t) => map.has(t.id)).map((t) => map.get(t.id)!), ...next.filter((t) => !old.has(t.id))];
+  } else library.tiles = next;
+}
 
-const album = (a: AlbumID3): Tile => ({ id: a.id, cover: coverUrl(a.coverArt), title: a.name, sub: a.artist ?? '', kind: 'album', count: a.songCount ?? 1 });
-const artist = (a: ArtistID3): Tile => ({ id: a.id, cover: coverUrl(a.coverArt), title: a.name, sub: 'artist', kind: 'artist', count: 1 });
-const playlist = (p: Playlist): Tile => ({ id: p.id, cover: coverUrl(p.coverArt ?? `pl-${p.id}`), title: p.name, sub: 'playlist', kind: 'playlist', count: p.songCount ?? 1 });
-
-let req = 0; // ignore results from a superseded mode switch
-let listing = true; // false once an artist pick replaced the mode listing with that artist's albums
-
-// getAlbumList2 caps size at 500; page through and show each page as it lands. A refresh already shows the old
-// list, so it swaps in the new one only once complete instead of dropping to the first page in between
 async function allAlbums(type: 'alphabeticalByArtist' | 'newest', mine: number, refresh: boolean) {
   const api = session.api!, out: Tile[] = [];
-  for (let offset = 0; ; offset += 500) {
-    const page = ok(await api.getAlbumList2({ type, size: 500, offset })).albumList2.album ?? [];
-    if (mine !== req) return;
-    out.push(...page.map(album));
-    if (!refresh || page.length < 500) library.tiles = out.slice();
-    if (page.length < 500) return;
+  for await (const page of localCatalog.albums(api, type)) {
+    if (mine !== req || api !== session.api) return;
+    out.push(...page);
+    if (!refresh) { localTiles = out.slice(); publish(true); }
   }
+  if (mine === req && api === session.api) { localTiles = out; publish(true); }
 }
-
 export async function setMode(mode: Mode, refresh = false) {
-  const api = session.api!, mine = ++req;
-  library.mode = mode; library.loading = true; listing = true;
-  if (!refresh) library.tiles = [];
+  const api = session.api, mine = ++req;
+  library.mode = mode; library.loading = true; library.error = ''; listing = true;
+  if (!refresh) { localTiles = []; publish(false); }
   try {
-    switch (mode) {
-      case 'albums': await allAlbums('alphabeticalByArtist', mine, refresh); break;
-      case 'recent': await allAlbums('newest', mine, refresh); break;
-      case 'random': library.tiles = (ok(await api.getAlbumList2({ type: 'random', size: 500 })).albumList2.album ?? []).map(album); break;
-      case 'starred': library.tiles = (ok(await api.getStarred2()).starred2.album ?? []).map(album); break;
-      case 'artists': {
-        const all = (ok(await api.getArtists()).artists.index ?? []).flatMap((i) => i.artist ?? []);
-        library.tiles = all.map(artist);
-        break;
-      }
-      case 'playlists': library.tiles = (ok(await api.getPlaylists()).playlists.playlist ?? []).map(playlist); break;
+    if (!api) return;
+    if (mode === 'albums') await allAlbums('alphabeticalByArtist', mine, refresh);
+    else {
+      const result = await localCatalog.playlists(api);
+      if (mine === req && api === session.api) { localTiles = result; publish(refresh); }
     }
-  } finally { if (mine === req) { library.loading = false; warmCovers(); } }
+    if (mine === req && api === session.api) library.revision++;
+  } catch (error) { if (mine === req) library.error = (error as Error).message; }
+  finally { if (mine === req) { library.loading = false; warmCovers(); } }
 }
 
-// loads the cover thumbnails in grid order in the background, so scrolling or searching later never waits for
-// navidrome to resize one: the browser caches them for a year. Covers use Vary: Origin, so the request has to
-// look like the grid's <img>, which a fetch() would not. A new list restarts from its top, skipping what is done
-const warmed = new Set<string>();
-let warmGen = 0;
+const warmed = new Set<string>(); let warmGen = 0;
 const preload = (u: string) => new Promise<void>((r) => { const i = new Image(); i.onload = i.onerror = () => r(); i.src = u; });
 async function warmCovers() {
-  const gen = ++warmGen, todo = library.tiles.map((t) => t.cover).filter((u) => u && !warmed.has(u));
-  // ponytail: 4 in flight leaves the browser's per-host connections for the covers on screen
+  const gen = ++warmGen, todo = library.tiles.filter((t) => t.source === 'local').map((t) => t.cover).filter((u) => u && !warmed.has(u));
   await Promise.all(Array.from({ length: 4 }, async () => {
     while (todo.length && gen === warmGen) { const u = todo.shift()!; await preload(u); warmed.add(u); }
   }));
 }
-
-// navidrome starts its first scan ~2s after it answers ping, so a one-off check after login misses it; polling
-// also catches the hourly rescans. The counter ticks every second; the list is reloaded every 5th tick while
-// scanning and once when it ends. A random pick is only redrawn while empty, so it does not reshuffle under the user
-let wasScanning = false, tick = 0;
+// Navidrome extends the Subsonic scan status with completion and failure details.
+type LibraryScanStatus = ScanStatus & { lastScan?: string | Date; error?: string };
 export function watchScan() {
-  setInterval(async () => {
-    if (!session.api) return;
-    const s = ok(await session.api.getScanStatus()).scanStatus;
-    library.scan = { scanning: s.scanning, count: s.count ?? 0 };
-    const due = !s.scanning || tick++ % 5 === 0, still = library.mode === 'random' && library.tiles.length;
-    if (listing && (s.scanning || wasScanning) && due && !still) setMode(library.mode, true);
-    wasScanning = s.scanning;
+  let busy = false, stopped = false, lastApi: typeof session.api = null;
+  let previous: { scanning: boolean; count: number; lastScan: string } | undefined;
+  let refreshPending = false, lastRefresh = Number.NEGATIVE_INFINITY;
+  const timer = setInterval(async () => {
+    if (busy) return;
+    const api = session.api;
+    if (api !== lastApi) {
+      lastApi = api; previous = undefined; refreshPending = false; lastRefresh = Number.NEGATIVE_INFINITY;
+      library.scan = { scanning: false, count: 0, checked: false, error: '' };
+    }
+    if (!api) return;
+    busy = true;
+    try {
+      const s: LibraryScanStatus = ok(await api.getScanStatus()).scanStatus;
+      if (stopped || api !== session.api) return;
+      const next = { scanning: s.scanning, count: s.count ?? 0, lastScan: String(s.lastScan ?? '') };
+      library.scan = { scanning: next.scanning, count: next.count, checked: true,
+        error: s.error ? `Music indexing failed: ${s.error}` : '' };
+      // A small scan can finish before the first poll, or entirely between polls.
+      // Refresh the first snapshot and any completed scan, even without seeing it start.
+      if (!previous || previous.count !== next.count || previous.lastScan !== next.lastScan || (previous.scanning && !next.scanning)) { refreshPending = true; library.revision++; }
+      previous = next;
+      const now = performance.now();
+      if (listing && !library.loading && (!next.scanning ? refreshPending : now - lastRefresh >= 5000)) {
+        refreshPending = false; lastRefresh = now;
+        await setMode(library.mode, true);
+      }
+    } catch (error) {
+      if (!stopped && api === session.api) library.scan.error = `Cannot check music indexing: ${(error as Error).message}`;
+    }
+    finally { busy = false; }
   }, 1000);
+  return () => { stopped = true; clearInterval(timer); };
 }
 
 const rnd = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
-
-// the songs behind a tile; for an artist, those of one of their albums at random
-async function songsOf(t: Tile): Promise<Child[]> {
-  const api = session.api!;
-  if (t.kind === 'album') return ok(await api.getAlbum({ id: t.id })).album.song ?? [];
-  if (t.kind === 'playlist') return ok(await api.getPlaylist({ id: t.id })).playlist.entry ?? [];
-  const albums = ok(await api.getArtist({ id: t.id })).artist.album ?? [];
-  return albums.length ? songsOf(album(rnd(albums))) : [];
+export async function songsOf(t: Tile): Promise<Track[]> {
+  const tracks: Track[] = [];
+  for await (const page of trackPages(t)) tracks.push(...page);
+  return tracks;
 }
-
+export async function* trackPages(t: Tile): AsyncGenerator<Track[]> {
+  if (t.indexing) throw new Error('This album is still being indexed. Its included tracks will appear shortly.');
+  if (!t.available) throw new Error('This collection has no playable tracks. Check your music folders in Settings.');
+  const api = session.api; if (!api) throw new Error('Your library is not connected.');
+  yield* localCatalog.tracks(api, t);
+}
 export async function pick(t: Tile) {
-  if (t.kind !== 'artist') return play(await songsOf(t));
-  const a = ok(await session.api!.getArtist({ id: t.id })).artist;
-  req++; listing = false;
-  library.tiles = (a.album ?? []).map(album);
+  const mine = ++pickRequest; player.loadingCollectionId = t.id; player.error = '';
+  const selection = ++player.requestRevision, api = session.api;
+  const operation = beginCollectionOperation('play', t.id);
+  try {
+    if (t.kind !== 'artist') {
+      let version: number | undefined;
+      for await (const tracks of trackPages(t)) {
+        if (mine !== pickRequest || api !== session.api) return;
+        if (!tracks.length) continue;
+        if (version === undefined) {
+          if (selection !== player.requestRevision) return;
+          version = play(tracks.map(track => ({ ...track, playbackOrigin: t })), 0, operation.id);
+          if (version < 0) return;
+        }
+        else if (!appendToSession(tracks.map(track => ({ ...track, playbackOrigin: t })), version)) return;
+      }
+      if (version === undefined) throw new Error('This collection contains no music tracks.');
+      return;
+    }
+    if (!api) throw new Error('Your library is not connected.');
+    const albums = await localCatalog.artistAlbums(api, t.rawId);
+    if (mine !== pickRequest || selection !== player.requestRevision || api !== session.api) return;
+    req++; listing = false; library.mode = 'albums'; library.tiles = albums;
+  } catch (error) { if (mine === pickRequest && api === session.api) operation.fail(error); }
+  finally { operation.finish(); if (mine === pickRequest) player.loadingCollectionId = ''; }
 }
+let addTail = Promise.resolve();
+export function addCollection(t: Tile) {
+  const version = queueSession(), api = session.api;
+  const operation = beginCollectionOperation('add', t.id);
+  addTail = addTail.then(async () => {
+    let includedTracks = false;
+    try {
+      if (version !== queueSession() || api !== session.api) return;
+      for await (const tracks of trackPages(t)) {
+        if (version !== queueSession() || api !== session.api) return;
+        const included = tracks.filter(track => track.available).map(track => ({ ...track, playbackOrigin: t }));
+        if (!included.length) continue;
+        if (!includedTracks) enqueue(included); else if (!appendToSession(included, version)) return;
+        includedTracks = true;
+      }
+      if (!includedTracks) throw new Error('This collection contains no music tracks.');
+    } catch (error) { if (version === queueSession() && api === session.api) operation.fail(error); }
+    finally { operation.finish(); }
+  });
+  return addTail;
+}
+export function disposeLibrary() { req++; pickRequest++; warmGen++; }
 
-// the songs of the visible tiles numbered 0..count-1 in grid order, for random play: a running total of the tiles' song
-// counts turns a number into a tile and a track, so no song list is ever downloaded; the album loads when its song plays.
-// ponytail: an artist is one number (a random song of a random album of theirs); give it its song count if artist
-// grids get played at random a lot
 export function grid(): Grid {
-  const tiles = library.visible, cum = new Float64Array(tiles.length + 1);
+  const tiles = browseCollections(library.tiles).filter((t) => t.available), cum = new Float64Array(tiles.length + 1);
   tiles.forEach((t, i) => (cum[i + 1] = cum[i] + Math.max(1, t.count)));
   return {
-    count: cum[tiles.length],
-    key: tiles.map((t) => t.id).join(),
+    count: cum[tiles.length], key: tiles.map((t) => t.id).join(),
     find: (albumId) => { const i = tiles.findIndex((t) => t.kind === 'album' && t.id === albumId); return i < 0 ? -1 : cum[i]; },
     async song(n) {
       let lo = 0, hi = tiles.length - 1;
       while (lo < hi) { const m = (lo + hi) >> 1; if (cum[m + 1] <= n) lo = m + 1; else hi = m; }
       const t = tiles[lo], songs = t && (await songsOf(t));
       if (!songs?.length) return;
-      return t.kind === 'artist' ? rnd(songs) : songs[n - cum[lo]] ?? rnd(songs); // counts can be stale while a scan runs
+      const track = t.kind === 'artist' ? rnd(songs) : songs[n - cum[lo]] ?? rnd(songs);
+      return { ...track, playbackOrigin: t };
     },
   };
 }

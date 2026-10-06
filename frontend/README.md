@@ -12,8 +12,12 @@ Log in with your Navidrome URL (default http://localhost:4533), username and pas
 
 Full-width grid of covers styled as glossy vinyl-paper sleeves, over a black vinyl surface that scrolls with
 the cards. The top bar fades in as the mouse approaches the top of the window. The menu in its corner switches
-between two control sets: *Layout* (columns 1–10, gap, "with art" to hide items without cover art, "motion")
+between two control sets: *Layout* (columns 1–10, gap, "motion")
 and *Look* (background material: vinyl, speaker grille, speaker cone, fabric). Everything is remembered.
+
+Settings → Appearance → Show artwork switches between covers and title tiles. Albums without cover art
+remain visible either way. Indexing refreshes the library even when a scan finishes between status polls;
+an empty desktop library shows its selected folder, and indexing failures appear in the library status.
 
 | Key | Action |
 |---|---|
@@ -62,3 +66,14 @@ or leaving full screen. While it is open it owns the keyboard, so `space` does n
 | `R` or `scroll lock` | toggle automatic cycling (lock the current preset) |
 | `T` | song title animation |
 | `Esc` | close |
+
+## Component tests and browser support
+
+Run `pnpm test:unit` for browser component/rune regressions using the same Svelte
+Vite plugin as production. Use `pnpm exec playwright install chromium` once if the
+Vitest browser provider cannot find Chromium, or set `MUSIC_TEST_BROWSER` to an
+installed executable. Application journeys continue to use `tests/agent/README.md`.
+
+The syntax baseline is Chromium 111, Firefox 114 and Safari 16.4. Queue popovers
+and Settings focus checks have capability fallbacks; Vite does not polyfill DOM
+APIs. See `../docs/core-reliability.md` for state ownership and provider contracts.
