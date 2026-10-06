@@ -73,6 +73,8 @@ jobs:
     runs-on: macos-14 # Apple Silicon
     env:
       MUSIC_CHANNEL: ${{ needs.prepare.outputs.channel }}
+      # electron-builder skips all signing on pull requests, including ad-hoc, without this
+      CSC_FOR_PULL_REQUEST: 'true'
       CSC_LINK: ${{ secrets.CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -104,6 +106,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MUSIC_CHANNEL: ${{ needs.prepare.outputs.channel }}
+      # electron-builder skips all signing on pull requests, including ad-hoc, without this
+      CSC_FOR_PULL_REQUEST: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
