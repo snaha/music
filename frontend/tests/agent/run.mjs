@@ -70,7 +70,9 @@ try {
     run('focus', '.bar-toggle');
     clickBarBackground();
     run('wait', '.now-playing');
-    assert(`[...document.querySelectorAll('.browse,.scroll,.empty-library,.results')].every(element=>element.inert)`, 'Player must isolate covered library controls while playback controls remain available');
+    assert(`[...document.querySelectorAll('.browse,.scroll,.empty-library,.results')].every(element=>element.closest('[inert]'))`, 'Player must isolate covered library controls while playback controls remain available');
+    for (let index=0; index<20; index++) run('press', 'Tab');
+    assert(`!document.activeElement.closest('.browse,.scroll,.empty-library') && !document.querySelector('.bar').inert`, 'Artwork keyboard navigation must exclude covered content and keep playback available');
     assert(`document.querySelector('.now-playing .detail-cover') !== null`, 'The full-width bar target must open now playing with large artwork');
     assert(`getComputedStyle(document.querySelector('.bar')).getPropertyValue('--play-surface').trim() !== ''`, 'Player must share its artwork palette');
     assert(`document.documentElement.scrollWidth<=innerWidth`, 'Now playing must fit the viewport');
@@ -136,6 +138,13 @@ try {
     run('press', '?');
     assert(`!!document.querySelector('[aria-label="Keyboard shortcuts"]')`, 'Shortcut help must be discoverable');
     capture(size, 'keyboard-help');
+    run('press', 'Escape');
+    run('click', button('Menu'));
+    run('focus', 'button[aria-label="Playback options"]');
+    run('press', '?');
+    assert(`document.querySelector('.now-playing').inert && document.activeElement.getAttribute('aria-label')==='Close keyboard shortcuts'`, 'Shortcuts must own focus above covered artwork');
+    run('press', 'Escape');
+    assert(`!document.querySelector('.now-playing').inert && document.activeElement.getAttribute('aria-label')==='Playback options'`, 'Closing shortcuts must restore its Queue opener after inert clears');
     run('press', 'Escape');
     run('click', button('Menu'));
     run('focus', 'button[aria-label="Playback options"]');

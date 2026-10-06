@@ -13,11 +13,12 @@ import { isElementVisible } from './dom';
 import { startRuntime } from './runtime';
 import { ui } from './ui-style.svelte';
 import { dig, coverRevision } from './discovery.svelte';
-import { artworkFocusScope } from './artwork-focus';
+import { artworkFocusScope, restoreFocusOnClose } from './artwork-focus';
 import DigPanel from './DigPanel.svelte';
 import Queue from './Queue.svelte';
 import CollectionDetails from './CollectionDetails.svelte';
 import Settings from './Settings.svelte';
+import Grid from './Grid.svelte';
 import type { Collection, Track } from './music';
 
 const tile: Collection = { id: 'local:album:a', rawId: 'a', source: 'local', kind: 'album', title: 'Album', sub: 'Artist', cover: '', count: 2, available: true };
@@ -260,43 +261,69 @@ describe('review regressions', () => {
       expect(dig.mood).toBe(60);
     } finally { dig.mood = 50; dig.energy = 50; dig.moodOn = false; }
   });
-  it('restores nested artwork ownership and isolates results added in the background', async () => {
-    const background = document.createElement('div'); background.className = 'browse';
-    const opener = document.createElement('button'); background.append(opener);
-    const lower = document.createElement('section');
-    const lowerButton = document.createElement('button');
-    lower.append(lowerButton);
-    const upper = document.createElement('section');
-    const upperButton = document.createElement('button');
-    upper.append(upperButton);
-    const results = document.createElement('div'); results.className = 'results';
-    document.body.append(background, lower, upper);
-    opener.focus();
-    let disposeLower: (() => void) | undefined = artworkFocusScope(lower);
-    let disposeUpper: (() => void) | undefined;
+  it('isolates covered Grid containers including newly inserted empty-library controls', async () => {
+    const grid = render(Grid, { tiles: [tile], onpick: () => {}, hidden: false });
+    await tick();
+    const opener = document.querySelector<HTMLButtonElement>('.tile')!;
+    opener.focus(); opener.click(); await tick();
+    const background = document.querySelector<HTMLElement>('.scroll')!;
+    const toolbar = document.querySelector<HTMLElement>('.browse')!;
+    expect(background.inert).toBe(true); expect(toolbar.inert).toBe(true);
+    expect(document.activeElement?.closest('.album-view')).not.toBeNull();
+    // Background catalog changes can insert a whole new control container.
+    await grid.rerender({ tiles: [] }); await tick();
+    const empty = document.querySelector<HTMLElement>('.empty-library')!;
+    expect(empty.inert).toBe(true);
+    const reset = empty.querySelector<HTMLButtonElement>('button')!;
+    reset.focus(); expect(document.activeElement).not.toBe(reset);
+    document.querySelector<HTMLButtonElement>('[aria-label="Back to music"]')!.click(); await tick();
+    expect(background.inert).toBe(false); expect(toolbar.inert).toBe(false); expect(empty.inert).toBe(false);
+    reset.focus(); expect(document.activeElement).toBe(reset);
+  });
+  it('restores the artwork opener without scrolling and yields to a competing focus owner', async () => {
+    const opener = document.createElement('button');
+    const overlay = document.createElement('section');
+    const close = document.createElement('button'); overlay.append(close);
+    const next = document.createElement('button');
+    document.body.append(opener, overlay, next);
     try {
-      await new Promise<void>(resolve => queueMicrotask(resolve));
+      opener.focus();
+      const restore = vi.spyOn(opener, 'focus');
+      const dispose = artworkFocusScope(overlay);
+      await tick(); expect(document.activeElement).toBe(close);
+      dispose(); await tick();
+      expect(document.activeElement).toBe(opener);
+      expect(restore).toHaveBeenLastCalledWith({ preventScroll: true });
+      const superseded = artworkFocusScope(overlay);
+      next.focus(); await tick(); expect(document.activeElement).toBe(next);
+      superseded(); await tick(); expect(document.activeElement).toBe(next);
+      opener.focus();
+      const canceled = artworkFocusScope(overlay);
+      canceled(); await tick(); expect(document.activeElement).toBe(opener);
+    } finally { opener.remove(); overlay.remove(); next.remove(); }
+  });
+  it('restores a nested artwork opener and never takes focus from an already open native dialog', async () => {
+    const lower = document.createElement('section');
+    const lowerButton = document.createElement('button'); lower.append(lowerButton);
+    const upper = document.createElement('section');
+    const upperButton = document.createElement('button'); upper.append(upperButton);
+    const dialog = document.createElement('dialog');
+    const input = document.createElement('input'); dialog.append(input);
+    document.body.append(lower, upper, dialog);
+    try {
+      const disposeLower = artworkFocusScope(lower); await tick();
       expect(document.activeElement).toBe(lowerButton);
-      disposeUpper = artworkFocusScope(upper);
-      document.body.append(results);
-      await new Promise<void>(resolve => queueMicrotask(resolve));
-      expect(lower.inert).toBe(true); expect(results.inert).toBe(true); expect(document.activeElement).toBe(upperButton);
-      disposeUpper();
-      disposeUpper = undefined;
-      await new Promise<void>(resolve => queueMicrotask(resolve));
-      expect(lower.inert).toBe(false); expect(background.inert).toBe(true); expect(document.activeElement).toBe(lowerButton);
-      disposeLower();
-      disposeLower = undefined;
-      await new Promise<void>(resolve => queueMicrotask(resolve));
-      expect(background.inert).toBe(false); expect(results.inert).toBe(false); expect(document.activeElement).toBe(opener);
-    } finally {
-      disposeUpper?.();
-      disposeLower?.();
-      background.remove();
-      lower.remove();
-      upper.remove();
-      results.remove();
-    }
+      const disposeUpper = artworkFocusScope(upper); await tick();
+      lower.inert = true;
+      expect(document.activeElement).toBe(upperButton);
+      lower.inert = false; disposeUpper(); upper.remove(); await tick();
+      expect(document.activeElement).toBe(lowerButton);
+      dialog.showModal(); input.focus();
+      const disposeCovered = artworkFocusScope(lower); await tick();
+      expect(document.activeElement).toBe(input);
+      disposeCovered(); disposeLower(); await tick();
+      expect(document.activeElement).toBe(input);
+    } finally { dialog.close(); dialog.remove(); lower.remove(); upper.remove(); }
   });
   it('lets the real Settings modal own focus above Queue and restores the queue control', async () => {
     play([track]);
@@ -332,27 +359,35 @@ describe('review regressions', () => {
     expect(dig.mood).toBe(75);
     dig.mood = 50; dig.energy = 50; dig.moodOn = false;
   });
-  it('isolates artwork focus, includes playback controls and respects a nested native dialog', async () => {
-    const background = document.createElement('div'); background.className = 'browse';
-    const opener = document.createElement('button'); opener.textContent = 'Album'; background.append(opener);
-    const existingInert = document.createElement('div'); existingInert.className = 'scroll'; existingInert.inert = true;
-    const overlay = document.createElement('section');
-    const first = document.createElement('button'); first.textContent = 'Close'; overlay.append(first);
-    const bar = document.createElement('div'); bar.className = 'bar';
-    const last = document.createElement('button'); last.textContent = 'Play'; bar.append(last);
-    document.body.append(background, existingInert, overlay, bar); opener.focus();
-    const dispose = artworkFocusScope(overlay);
+  it('restores shortcut focus after the covered Queue becomes interactive again', async () => {
+    render(Queue, { onclose: () => {}, palette: '', options: createRawSnippet(() => ({ render: () => '<div></div>' })) });
+    await tick();
+    const opener = document.querySelector<HTMLButtonElement>('.now-playing button')!;
+    opener.focus();
+    const help = document.createElement('button'); document.body.append(help);
     try {
-      await new Promise<void>(resolve => queueMicrotask(resolve));
-      expect(background.inert).toBe(true); expect(document.activeElement).toBe(first);
-      first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
-      expect(document.activeElement).toBe(last);
-      last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
-      expect(document.activeElement).toBe(first);
-      const dialog = document.createElement('dialog'); const input = document.createElement('input'); dialog.append(input); document.body.append(dialog); dialog.showModal(); input.focus();
-      expect(document.activeElement).toBe(input); dialog.close(); dialog.remove(); first.focus();
-    } finally { dispose(); await new Promise<void>(resolve => queueMicrotask(resolve)); }
-    expect(background.inert).toBe(false); expect(existingInert.inert).toBe(true); expect(document.activeElement).toBe(opener);
-    background.remove(); existingInert.remove(); overlay.remove(); bar.remove();
+      const restore = restoreFocusOnClose(help, opener);
+      player.shortcutsOpen = true; await tick();
+      help.focus();
+      // Removal cleanup happens before Svelte updates the covered container.
+      player.shortcutsOpen = false; restore(); help.remove(); await tick();
+      expect(document.querySelector<HTMLElement>('.now-playing')!.inert).toBe(false);
+      expect(document.activeElement).toBe(opener);
+    } finally { player.shortcutsOpen = false; help.remove(); }
+  });
+  it('leaves playback controls available and makes covered artwork yield to shortcuts', async () => {
+    const bar = document.createElement('div');
+    const playback = document.createElement('button'); bar.append(playback); document.body.append(bar);
+    try {
+      render(Queue, { onclose: () => {}, palette: '', options: createRawSnippet(() => ({ render: () => '<div></div>' })) });
+      await tick();
+      const overlay = document.querySelector<HTMLElement>('.now-playing')!;
+      playback.focus(); expect(document.activeElement).toBe(playback);
+      player.shortcutsOpen = true; await tick(); expect(overlay.inert).toBe(true);
+      const close = overlay.querySelector<HTMLButtonElement>('button')!;
+      close.focus(); expect(document.activeElement).toBe(playback);
+      player.shortcutsOpen = false; await tick(); expect(overlay.inert).toBe(false);
+      close.focus(); expect(document.activeElement).toBe(close);
+    } finally { player.shortcutsOpen = false; bar.remove(); }
   });
 });

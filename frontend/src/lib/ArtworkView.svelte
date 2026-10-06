@@ -2,14 +2,14 @@
   import type { Snippet } from 'svelte';
   import { artworkFocusScope } from './artwork-focus';
   import { keyboardScope } from './keyboard';
-  let { id, label, palette, className = '', header, artwork, children, onkeydown, listElement = $bindable(), bodyElement = $bindable() }: {
-    id?: string; label: string; palette: string; className?: string;
+  let { id, label, palette, className = '', covered = false, header, artwork, children, onkeydown, listElement = $bindable(), bodyElement = $bindable() }: {
+    id?: string; label: string; palette: string; className?: string; covered?: boolean;
     header: Snippet; artwork: Snippet; children: Snippet;
     onkeydown: (event: KeyboardEvent) => void; listElement?: HTMLDivElement; bodyElement?: HTMLDivElement;
   } = $props();
 </script>
 
-<section {id} class="artwork-view {className}" style={palette} aria-label={label} use:keyboardScope={onkeydown} {@attach artworkFocusScope}>
+<section inert={covered} {id} class="artwork-view {className}" style={palette} aria-label={label} use:keyboardScope={onkeydown} {@attach artworkFocusScope}>
   <header>{@render header()}</header>
   <div class="artwork-body" bind:this={bodyElement}>
     <aside>{@render artwork()}</aside>

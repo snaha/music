@@ -9,6 +9,7 @@
   import { preferenceStatus } from './lib/preferences-status.svelte';
   import { retryPreferences, dismissPreferenceError } from './lib/preferences';
   import { catalog } from './lib/discovery.svelte';
+  import { restoreFocusOnClose } from './lib/artwork-focus';
   import { toolbar } from './lib/ui-style.svelte';
   import Grid from './lib/Grid.svelte';
   import Visualizer from './lib/Visualizer.svelte';
@@ -40,8 +41,9 @@
   function focusHelp(node: HTMLButtonElement) {
     const active = document.activeElement as HTMLElement | null;
     const previous = active?.closest('[aria-label="Playback options"]') ? document.querySelector<HTMLButtonElement>('button[aria-label="Playback options"]') : active;
+    const restore = restoreFocusOnClose(node, previous);
     node.focus({ preventScroll: true });
-    return { destroy() { if (previous?.isConnected && (document.activeElement === document.body || node.closest('.hint')?.contains(document.activeElement))) previous.focus({ preventScroll: true }); } };
+    return { destroy: restore };
   }
   let searchReturn: HTMLElement | null = null;
   async function focusSearch() {
