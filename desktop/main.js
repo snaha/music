@@ -71,6 +71,15 @@ async function waitFor(url) {
 
 let navidrome;
 
+// portable builds launch with --data-dir <folder next to the launcher>, so the library index, settings and
+// passwords travel with the folder instead of living in the OS application-data directory
+const dataDirFlag = process.argv.indexOf('--data-dir');
+if (dataDirFlag > 0 && process.argv[dataDirFlag + 1]) {
+  const dir = path.resolve(process.argv[dataDirFlag + 1]);
+  app.setPath('userData', dir);
+  app.setPath('sessionData', dir);
+}
+
 app.whenReady().then(async () => {
   // macOS takes Cmd+Q and the Dock/app-switcher quit from the app menu; without one the app can't be quit and a
   // freshly installed version just re-activates the old process that is still running
