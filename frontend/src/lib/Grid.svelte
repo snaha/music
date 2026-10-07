@@ -1,6 +1,7 @@
 <script lang="ts">
   import { keyboardScope } from './keyboard';
   import { onDestroy, onMount, untrack } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import { createBrowseView } from './browse-view.svelte';
   import { registerBrowseSource } from './browse-source';
   import { readPreference, writePreference } from './preferences';
@@ -113,9 +114,34 @@
   const effectiveCols = $derived(Math.min(cols, Math.max(1, Math.floor(viewportWidth / 140))));
   const rowStep = $derived(Math.max(1, (viewportWidth - pixelGap * (effectiveCols + 1)) / effectiveCols + pixelGap));
   const totalRows = $derived(Math.ceil(shown.length / effectiveCols));
-  const firstRow = $derived(Math.max(0, Math.min(totalRows, Math.floor((scrollTop - filterHeight - pixelGap) / rowStep) - 2)));
-  const lastRow = $derived(Math.min(totalRows, Math.ceil((scrollTop + viewportHeight - filterHeight) / rowStep) + 3));
+  // several viewports of tiles each side keep a fast fling from outrunning the mounted rows
+  const BUFFER_VIEWPORTS = 120;
+  const bufferRows = $derived(Math.ceil(BUFFER_VIEWPORTS * viewportHeight / rowStep));
+  const firstRow = $derived(Math.max(0, Math.min(totalRows, Math.floor((scrollTop - filterHeight - pixelGap) / rowStep) - bufferRows)));
+  const lastRow = $derived(Math.min(totalRows, Math.ceil((scrollTop + viewportHeight - filterHeight) / rowStep) + bufferRows));
   const visibleTiles = $derived(shown.slice(firstRow * effectiveCols, lastRow * effectiveCols));
+  // Covers near the viewport load at once; the rest get their src only once warmed into the cache,
+  // nearest to the current scroll position first, so a fling meets loaded images instead of a queue.
+  const NEAR_VIEWPORTS = 1, WARM_PARALLEL = 6;
+  const centerRow = $derived((scrollTop - filterHeight + viewportHeight / 2) / rowStep);
+  const near = (index: number) => index < 0 || Math.abs(Math.floor(index / effectiveCols) - centerRow) <= NEAR_VIEWPORTS * viewportHeight / rowStep;
+  const warmed = new SvelteSet<string>();
+  const preload = (u: string) => new Promise<void>((r) => { const i = new Image(); i.onload = i.onerror = () => r(); i.src = u; });
+  let warmGen = 0;
+  async function warmCovers(tiles: Tile[]) {
+    const gen = ++warmGen, pending = new Set(tiles.map((t, i) => i).filter(i => tiles[i].cover && !warmed.has(tiles[i].cover)));
+    const nearest = () => { // the scroll position is read when each cover is picked, so the queue follows the user
+      const center = untrack(() => centerRow) * untrack(() => effectiveCols);
+      let best = -1, bestDistance = Infinity;
+      for (const i of pending) { const d = Math.abs(i - center); if (d < bestDistance) { best = i; bestDistance = d; } }
+      return best;
+    };
+    await Promise.all(Array.from({ length: WARM_PARALLEL }, async () => {
+      while (pending.size && gen === warmGen) { const i = nearest(); pending.delete(i); await preload(tiles[i].cover); if (gen === warmGen) warmed.add(tiles[i].cover); }
+    }));
+  }
+  $effect(() => { const tiles = shown; untrack(() => void warmCovers(tiles)); });
+  onDestroy(() => { warmGen++; });
 
   let scroller: HTMLDivElement;
   // Playback and background refreshes keep the user's scroll position.
@@ -221,11 +247,11 @@
   {#if sort === 'color'}<div class="color-status" role="status">{catalog.colorsLoading ? `Reading cover colors · ${colorsReady} ready` : 'Cover colors ready'}<button disabled={catalog.colorsLoading} onclick={applySort}>Apply color sort</button></div>{/if}
 </div>
 
-{#snippet collectionCard(t: Tile)}
+{#snippet collectionCard(t: Tile, index = -1)}
       {@const playback = collectionPlayback(t)}
       <div class="tile-wrap" class:coverless={!t.cover} class:discovered={t.id === discoveryId} class:current={playback.current} class:listening={playback.listening}>
         <button class="tile" class:active={playback.listening} onclick={() => { details = t; player.queueOpen = false; player.view = ''; }} aria-label="Open {t.title} — {t.sub}" aria-current={playback.current ? 'true' : undefined}>
-          {#if t.cover}<img src={t.cover} alt="" loading="lazy" draggable="false" />{/if}
+          {#if t.cover && (warmed.has(t.cover) || near(index))}<img src={t.cover} alt="" draggable="false" />{/if}
         </button>
         <div class="tile-play"><CollectionPlayback collection={t} compact onplay={() => { if (!t.available) details = t; else pick(t); }} /></div>
         <div class="tile-info"><span class="tile-title">{t.title}<small>{t.sub}</small></span></div>
@@ -259,8 +285,8 @@
     class:m-fabric={bg.scroll && bg.material === 'fabric'} class:m-custom={bg.scroll && (bg.material === 'custom' || bg.material === 'noise')} style:--cols={effectiveCols} style:--gap="max(0.2px, calc({gap} * var(--u)))"
     style:padding-top="{filterHeight + pixelGap + firstRow * rowStep}px" style:padding-bottom="calc(var(--botbar, 60px) + {pixelGap + (totalRows - lastRow) * rowStep}px)"
     style:transform="translate3d({drift.current.x * -8}px, {drift.current.y * -6}px, 0)">
-    {#each visibleTiles as t (t.id)}
-      {@render collectionCard(t)}
+    {#each visibleTiles as t, i (t.id)}
+      {@render collectionCard(t, firstRow * effectiveCols + i)}
     {/each}
   </div>
   {/if}
