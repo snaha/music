@@ -37,8 +37,7 @@
   let advancedLayout = $state(false);
   function resizeGrid(value: number) { cols = 11 - value; gap = Math.round(24 + cols * 8); }
   let gap = $state(savedNumber('grid.gap', 48, 0, 160));
-  // The former `art` preference filtered out albums without covers; it did not hide images.
-  let art = $state(readPreference('artwork.visible') !== '0');
+  let coversOnly = $state(readPreference('covers.only') === '1'); // off by default
   let motion = $state(readPreference('motion') === '1'); // off by default
   type BarMode = 'library' | 'filters' | 'layout' | 'look' | 'theme';
   function closeModes() {
@@ -49,7 +48,7 @@
   function backToSelector() { player.view = ''; toolbar.selecting = true; requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.mode-options button[aria-pressed=true]')?.focus()); }
   $effect(() => {
     writePreference('grid.cols', String(cols)); writePreference('grid.gap', String(gap));
-    writePreference('artwork.visible', art ? '1' : '0'); writePreference('motion', motion ? '1' : '0');
+    writePreference('covers.only', coversOnly ? '1' : '0'); writePreference('motion', motion ? '1' : '0');
     writePreference('library.source', library.source);
   });
   let query = $state('');
@@ -95,19 +94,19 @@
   const colorsReady = $derived(sourceTiles.filter(tile => tile.cover && catalog.colors[tile.id]?.colorReady && catalog.colors[tile.id]?.colorRevision === coverRevision(tile)).length);
   const artists = $derived([...new Set(sourceTiles.filter((t) => t.kind === 'album').map((t) => t.sub).filter(Boolean))].sort(collator.compare));
   const view = createBrowseView(() => ({
-    tiles, source: library.source, query, artist: artistFilter, show: showFilter, favoritesOnly,
+    tiles, source: library.source, query, artist: artistFilter, show: showFilter, favoritesOnly, coversOnly,
     sort, direction: sortDirection, randomSeed, colorOrder, digActive: digActive(),
     metadata, score: digScore, tagged: tile => !!catalog.items[tile.id]?.traits,
     plays: id => catalog.stats[id]?.plays || 0,
     key: JSON.stringify([library.mode, library.source, query, artistFilter, sort, sortDirection, sortRevision,
-      randomSeed, showFilter, favoritesOnly, dig.moodOn, dig.mood, dig.energy, dig.familiarity, dig.acoustic, dig.vocal]),
+      randomSeed, showFilter, favoritesOnly, coversOnly, dig.moodOn, dig.mood, dig.energy, dig.familiarity, dig.acoustic, dig.vocal]),
   }));
   const shown = $derived(view.collections);
   onMount(() => registerBrowseSource(() => searching ? catalogSearch.collections : view.collections));
   function filterChanged() { scrollTop = 0; details = null; player.queueOpen = false; player.view = ''; scroller?.scrollTo({ top: 0 }); }
   function changeMode(mode: Mode) { artistFilter = ''; favoritesOnly = false; filterChanged(); void setMode(mode); }
   function changeSource() { artistFilter = ''; filterChanged(); }
-  function resetFilters() { query = ''; artistFilter = ''; library.source = 'all'; sort = 'title'; sortDirection = 1; showFilter = 'all'; favoritesOnly = false; resetDig(); filterChanged(); }
+  function resetFilters() { query = ''; artistFilter = ''; library.source = 'all'; sort = 'title'; sortDirection = 1; showFilter = 'all'; favoritesOnly = false; coversOnly = false; resetDig(); filterChanged(); }
 
   let viewportWidth = $state(innerWidth), viewportHeight = $state(innerHeight), scrollTop = $state(0);
   const pixelGap = $derived(Math.max(0.2, gap * (viewportWidth + (innerWidth - viewportWidth)) / 3312));
@@ -226,7 +225,7 @@
       {@const playback = collectionPlayback(t)}
       <div class="tile-wrap" class:discovered={t.id === discoveryId} class:current={playback.current} class:listening={playback.listening}>
         <button class="tile" class:active={playback.listening} onclick={() => { details = t; player.queueOpen = false; player.view = ''; }} aria-label="Open {t.title} — {t.sub}" aria-current={playback.current ? 'true' : undefined}>
-          {#if art && t.cover}<img src={t.cover} alt="" loading="lazy" draggable="false" />{:else}<span class="fallback">{t.title}</span>{/if}
+          {#if t.cover}<img src={t.cover} alt="" loading="lazy" draggable="false" />{:else}<span class="fallback">{t.title}</span>{/if}
         </button>
         <div class="tile-play"><CollectionPlayback collection={t} compact onplay={() => { if (!t.available) details = t; else pick(t); }} /></div>
         <div class="tile-info"><span class="tile-title">{t.title}<small>{t.sub}</small></span></div>
@@ -290,7 +289,7 @@
 {#if currentDetails}{#key currentDetails.id}<CollectionDetails tile={currentDetails} onclose={() => (details = null)} />{/key}{/if}
 {#if library.error || library.scan.error}<div class="library-status" role="alert">{library.error || library.scan.error}</div>{/if}
 
-{#if player.view === 'settings'}<Settings bind:art bind:motion initialTab={settingsTab} onclose={() => (player.view = '')} />{/if}
+{#if player.view === 'settings'}<Settings bind:coversOnly bind:motion initialTab={settingsTab} onclose={() => (player.view = '')} />{/if}
 
 <style>
   .scroll {
