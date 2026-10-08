@@ -12,6 +12,7 @@
   import { toolbar } from './lib/ui-style.svelte';
   import Grid from './lib/Grid.svelte';
   import Visualizer from './lib/Visualizer.svelte';
+  import { bg } from './lib/background.svelte';
   import Startup from './lib/Startup.svelte';
   import { desktop, initDesktop } from './lib/desktop.svelte';
 
@@ -127,7 +128,9 @@
     </aside>
   {/if}
   <Bar hidden={idle} />
-  {#if player.visOpen}<Visualizer />{/if}
+  <!-- one visualizer for both places: behind the grid as the background material, and fullscreen. Opening it fullscreen
+    carries on from the picture the background shows -->
+  {#if player.visOpen || bg.material === 'viz'}<Visualizer background={!player.visOpen} />{/if}
 {/if}
 
 <style>
