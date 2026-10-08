@@ -11,7 +11,7 @@ const run = (...command) => {
   const env = { ...process.env };
   if (started) delete env.AGENT_BROWSER_EXECUTABLE_PATH;
   started = true;
-  if (['click', 'focus'].includes(command[0]) && ['Library', 'Library filters', 'Layout', 'Background', 'Theme'].some(label => command[1] === `button[aria-label="${label}"]`)) {
+  if (['click', 'focus'].includes(command[0]) && ['Library', 'Library filters', 'Layout', 'Background', '3D', 'Theme'].some(label => command[1] === `button[aria-label="${label}"]`)) {
     const expanded = execFileSync(cli, [...args, 'eval', 'document.querySelector(".bar-modes > button").getAttribute("aria-expanded")'], { encoding: 'utf8', timeout: 30000, env }).trim();
     if (!expanded.includes('true')) execFileSync(cli, [...args, 'click', 'button[aria-label="Choose toolbar mode"]'], { encoding: 'utf8', timeout: 30000, env });
   }
@@ -230,6 +230,45 @@ try {
     assert(`!!document.querySelector('[role="radiogroup"][aria-label="Background"]') && !document.querySelector('[aria-label="Advanced grid size"]')`, 'Background must replace the secondary layout controls');
     assert(`document.querySelector('.bar-modes').getBoundingClientRect().right<=innerWidth && document.querySelector('.controls .group').getBoundingClientRect().right<=innerWidth`, 'Background mode must keep its toolbar and material strip within the viewport');
     capture(size, 'background-mode');
+    // 3D views: the front album survives loop toggling, view switches and the return to the flat grid, and its card actions work
+    const frontDisc = `[...document.querySelectorAll('.disc')].filter(d => d.style.opacity === '1').sort((a, b) => b.style.zIndex - a.style.zIndex)[0]`;
+    const frontTitle = `${frontDisc}.querySelector('.tile').getAttribute('aria-label')`;
+    run('click', button('3D'));
+    run('click', '[aria-label="3D view"] button:nth-child(3)');
+    run('wait', '.disc');
+    evaluate(`document.querySelector('.scroll').scrollTop = 20 * parseFloat(document.querySelector('.disc').style.width) * 0.6`);
+    run('wait', '300');
+    evaluate(`window.__auditFront = ${frontTitle}`);
+    assert(`window.__auditFront.startsWith('Open Album 020')`, 'Jukebox scrolling must bring a later album to the front');
+    evaluate(`${frontDisc}.querySelector('.tile-play button').click()`);
+    run('wait', '--fn', '!!document.querySelector(".disc .tile-wrap.listening")');
+    assert(`document.querySelector('.bar .meta b').textContent.includes('song 20')`, 'The front jukebox card must play its own album');
+    run('click', button('Pause'));
+    evaluate(`${frontDisc}.querySelector('.tile').click()`);
+    run('wait', '.album-view');
+    assert(`document.querySelector('.album-view').innerText.includes('Album 020')`, 'The front jukebox cover must open its own album');
+    run('click', button('Back to music'));
+    run('wait', '300');
+    assert(`${frontTitle}===window.__auditFront`, 'Closing album details must keep the front album');
+    run('click', '.controls > button[aria-pressed]:first-of-type');
+    run('wait', '300');
+    assert(`${frontTitle}===window.__auditFront`, 'Loop on must keep the front album');
+    run('click', '[aria-label="3D view"] button:nth-child(4)');
+    run('wait', '800');
+    assert(`${frontTitle}===window.__auditFront`, 'Cover flow must keep the front album in the middle');
+    run('click', '[aria-label="3D view"] button:nth-child(3)');
+    run('wait', '300');
+    assert(`${frontTitle}===window.__auditFront`, 'Back in the jukebox the same album must stand at the front');
+    run('click', '.controls > button[aria-pressed]:first-of-type');
+    run('wait', '300');
+    assert(`${frontTitle}===window.__auditFront`, 'Loop off must keep the front album');
+    run('click', '[aria-label="3D view"] button:nth-child(2)');
+    run('wait', '300');
+    assert(`!document.querySelector('.disc') && !!document.querySelector('.plane .cell .tile')`, 'The 3D grid must lay the covers on the plane');
+    capture(size, '3d-grid');
+    run('click', '[aria-label="3D view"] button:nth-child(1)');
+    run('wait', '300');
+    assert(`(() => { const tile=document.querySelector('.grid .tile[aria-label="' + window.__auditFront + '"]'); if (!tile) return false; const r=tile.getBoundingClientRect(); const top=document.querySelector('.scroll').getBoundingClientRect().top; return r.top >= top && r.top < top + 2 * r.height; })()`, 'Off must land the flat grid on the front album');
     run('click', button('Theme'));
     assert(`document.querySelectorAll('.browse [aria-label="Search library"]').length===1`, 'Search must have a single home');
     const scrollBeforeTheme = run('eval', 'document.querySelector(".scroll").scrollTop').trim();
