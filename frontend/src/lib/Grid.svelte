@@ -256,6 +256,39 @@
   });
   // the plane's shift along itself: scroll plus the mouse drift
   const shiftX = $derived(drift.current.x * -8), shiftY = $derived(-offset + drift.current.y * -6);
+  // L, or ctrl/cmd-L as in iTunes, scrolls to the playing album. If it is not in the list (another mode, a search, a
+  // filter) it first goes to all albums, and the jump follows once they are in
+  let want = false;
+  function reveal() {
+    if (!activeId) return;
+    if (!shown.some(t => t.id === activeId)) {
+      want = true; query = ''; artistFilter = ''; showFilter = 'all'; favoritesOnly = false; library.source = 'all'; resetDig();
+      if (library.mode !== 'albums') changeMode('albums'); else filterChanged();
+      return;
+    }
+    const i = shown.findIndex(t => t.id === activeId);
+    requestAnimationFrame(() => {
+      if (!tilt) return scroller.scrollTo({ top: filterHeight + pixelGap + Math.floor(i / effectiveCols) * rowStep + rowStep / 2 - viewportHeight / 2, behavior: 'smooth' });
+      // on the tilted plane the scroll is the distance along it: bring the cover to the middle of the plane, the nearest
+      // way round when it loops. In a single row it comes to the front, or the middle, of the row
+      const round = (d: number, p: number) => (p ? mod(d + p / 2, p) - p / 2 : d);
+      const to = single ? i * pitch : pixelGap + Math.floor(i / across) * pitch + tile / 2 - viewportHeight / 2;
+      scroller.scrollBy({ [flow ? 'left' : 'top']: round(to - offset, looping ? period : 0), behavior: 'smooth' });
+    });
+  }
+  $effect(() => { if (want && shown.some(t => t.id === activeId)) { want = false; untrack(reveal); } });
+  function onkeydown(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.isComposing || player.visOpen) return;
+    const target = e.target as HTMLElement, combo = e.ctrlKey || e.metaKey; // the combination also works from the search field
+    const editing = !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="combobox"]');
+    if (e.key.toLowerCase() === 'l' && !e.altKey && !e.repeat && (combo || !editing)) { e.preventDefault(); reveal(); return; }
+    if (e.key !== 'Escape' || combo || player.view || player.queueOpen) return;
+    if (details) details = null;
+    else if (dig.open) { dig.open = false; document.querySelector<HTMLButtonElement>('[aria-label="Dig into your music"]')?.focus(); }
+    else if (toolbar.mode !== 'library') { backToSelector(); document.querySelector<HTMLButtonElement>('[aria-label="Choose toolbar mode"]')?.focus(); }
+    else return;
+    e.preventDefault();
+  }
   // Both bars follow the app's idle timer. Hover, keyboard focus and open menus keep the top visible.
   const touchAtLoad = matchMedia('(hover: none), (pointer: coarse)').matches;
   let touch = $state(touchAtLoad);
@@ -374,14 +407,7 @@
 {/snippet}
 
 <!-- an image dropped anywhere becomes the custom background -->
-<svelte:window onkeydown={e => {
-  if (e.key !== 'Escape' || e.defaultPrevented || player.view || player.queueOpen || player.visOpen) return;
-  if (details) details = null;
-  else if (dig.open) { dig.open = false; document.querySelector<HTMLButtonElement>('[aria-label="Dig into your music"]')?.focus(); }
-  else if (toolbar.mode !== 'library') { backToSelector(); document.querySelector<HTMLButtonElement>('[aria-label="Choose toolbar mode"]')?.focus(); }
-  else return;
-  e.preventDefault();
-}} onpointermove={onmove} {ontouchstart}
+<svelte:window {onkeydown} onpointermove={onmove} {ontouchstart}
   onfocusin={(e) => chromeFocus(e.target)} onfocusout={(e) => chromeFocus(e.relatedTarget)}
   ondragover={(e) => e.preventDefault()} ondrop={(e) => { e.preventDefault(); const f = e.dataTransfer?.files[0]; if (f) importBackground(f); }} />
 
