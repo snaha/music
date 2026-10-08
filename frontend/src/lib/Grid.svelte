@@ -40,6 +40,9 @@
   // The former `art` preference filtered out albums without covers; it did not hide images.
   let art = $state(readPreference('artwork.visible') !== '0');
   let motion = $state(readPreference('motion') === '1'); // off by default
+  // gloss: a laminate sheen and paper grain over each cover, for the flat grid only. In the 3D views every moving cover
+  // would repaint it each frame
+  let gloss = $state(readPreference('grid.gloss') === '1');
   // 3D: the grid lies on a plane tilted back from the bottom edge and scrolls away into the distance, like a title crawl.
   // The views are picked in the 3D control set of the Display options
   const VIEWS = { off: 'Off', grid: 'Grid', jukebox: 'Jukebox', flow: 'Cover flow' } as const;
@@ -72,7 +75,7 @@
   $effect(() => {
     writePreference('grid.cols', String(cols)); writePreference('grid.gap', String(gap));
     writePreference('artwork.visible', art ? '1' : '0'); writePreference('motion', motion ? '1' : '0');
-    writePreference('grid.3d', view3d); writePreference('grid.loop', loop ? '1' : '0'); writePreference('grid.inf', inf ? '1' : '0'); writePreference('grid.reflect', reflect ? '1' : '0');
+    writePreference('grid.gloss', gloss ? '1' : '0'); writePreference('grid.3d', view3d); writePreference('grid.loop', loop ? '1' : '0'); writePreference('grid.inf', inf ? '1' : '0'); writePreference('grid.reflect', reflect ? '1' : '0');
     writePreference('library.source', library.source);
   });
   let query = $state('');
@@ -346,6 +349,7 @@
         {#if advancedLayout}<label class="slider-control"><span>Columns</span><Slider type="single" min={1} max={10} step={1} value={cols} onValueChange={value => (cols = value)} aria-label="Album columns" /><output>{cols}</output></label><label class="slider-control"><span>Gap</span><Slider type="single" min={0} max={160} step={1} value={gap} onValueChange={value => (gap = value)} aria-label="Album spacing" /><output>{gap}</output></label>
         {:else}<label class="slider-control"><span>Grid size</span><Slider type="single" min={1} max={10} step={1} value={11 - cols} onValueChange={resizeGrid} aria-label="Advanced grid size" /><output>{effectiveCols} across</output></label>{/if}
         <Button variant="outline" size="sm" aria-pressed={advancedLayout} onclick={() => (advancedLayout = !advancedLayout)}>{advancedLayout ? 'Simple' : 'Advanced'}</Button>
+        {#if !tilt}<Button variant={gloss ? 'default' : 'outline'} size="sm" aria-pressed={gloss} onclick={() => (gloss = !gloss)}>Gloss</Button>{/if}
       </div>
     {:else if toolbar.mode === 'look'}
       <div class="controls"><span class="group" role="radiogroup" aria-label="Background">{#each Object.entries(MATERIALS) as [key, label] (key)}<button class="opt" class:on={bg.material === key} role="radio" aria-checked={bg.material === key} disabled={key === 'custom' && !bg.custom} onclick={() => (bg.material = key as keyof typeof MATERIALS)}>{label}</button>{/each}<button class="opt" onclick={randomBackground}>Random</button></span></div>
@@ -367,6 +371,7 @@
       <div class="tile-wrap" class:discovered={t.id === discoveryId} class:current={playback.current} class:listening={playback.listening}>
         <button class="tile" class:active={playback.listening} onclick={() => { details = t; player.queueOpen = false; player.view = ''; }} aria-label="Open {t.title} — {t.sub}" aria-current={playback.current ? 'true' : undefined}>
           {#if art && t.cover}<img src={t.cover} alt="" loading="lazy" draggable="false" />{:else}<span class="fallback">{t.title}</span>{/if}
+          {#if gloss && !tilt}<i class="gloss"></i>{/if}
         </button>
         <div class="tile-play"><CollectionPlayback collection={t} compact onplay={() => { if (!t.available) details = t; else pick(t); }} /></div>
         <div class="tile-info"><span class="tile-title">{t.title}<small>{t.sub}</small></span></div>
@@ -555,6 +560,10 @@
   .tile-wrap { position: relative; isolation: isolate; aspect-ratio: 1; min-width: 0; }
   .tile { all: unset; display: block; cursor: pointer; position: relative; width: 100%; height: 100%; overflow: hidden; background: #191919; border-radius: 2px; box-shadow: 0 3px 6px #0004; }
   .tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  /* glossy vinyl-paper sleeve: the materials' paper grain, a broad laminate reflection with a faint second band,
+     a lit top-left edge and a shaded bottom-right edge */
+  .gloss { position: absolute; inset: 0; border-radius: 2px; pointer-events: none;
+    background: var(--grain), linear-gradient(115deg, #fff0 0%, #fff0 18%, #ffffff1c 30%, #ffffff0a 42%, #fff0 50%, #fff0 62%, #ffffff0f 70%, #fff0 78%), linear-gradient(165deg, #ffffff1a 0%, #fff0 40%, #0000001a 100%); }
   .tile:focus-visible { outline: 2px solid white; outline-offset: 3px; }
   .tile-wrap:hover .tile, .tile-wrap:focus-within .tile { outline: 1px solid #fff; outline-offset: -1px; box-shadow: 0 4px 18px #0009; }
   .tile-wrap.listening .tile { outline: 3px solid #fff; outline-offset: -3px; }
