@@ -9,7 +9,7 @@
   import { preferenceStatus } from './lib/preferences-status.svelte';
   import { retryPreferences, dismissPreferenceError } from './lib/preferences';
   import { catalog } from './lib/discovery.svelte';
-  import { restoreFocusOnClose } from './lib/artwork-focus';
+  import { restoreFocusOnClose, wrapArtworkTab } from './lib/artwork-focus';
   import { toolbar } from './lib/ui-style.svelte';
   import Grid from './lib/Grid.svelte';
   import Visualizer from './lib/Visualizer.svelte';
@@ -46,8 +46,10 @@
     return { destroy: restore };
   }
   let searchReturn: HTMLElement | null = null;
+  let grid = $state.raw<{ closeDetails: () => void }>();
   async function focusSearch() {
     searchReturn = document.activeElement as HTMLElement;
+    grid?.closeDetails();
     player.view = ''; player.queueOpen = false; player.shortcutsOpen = false; wake();
     toolbar.mode = 'library'; toolbar.selecting = false;
     await tick();
@@ -56,6 +58,7 @@
   }
   function onkeydown(e: KeyboardEvent) {
     if (e.defaultPrevented || e.isComposing || !session.api || player.visOpen) return;
+    if (e.key === 'Tab') { wrapArtworkTab(e); return; }
     const target = e.target as HTMLElement;
     const editing = !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="combobox"]');
     if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') { e.preventDefault(); void focusSearch(); return; }
@@ -108,7 +111,7 @@
 {:else if !session.api}
   <Login />
 {:else}
-  <Grid tiles={library.tiles} onpick={pick} activeId={player.song?.albumId} hidden={idle} />
+  <Grid bind:this={grid} tiles={library.tiles} onpick={pick} activeId={player.song?.albumId} hidden={idle} />
   {#if player.shortcutsOpen}
     <aside class="hint" aria-label="Keyboard shortcuts">
       <div class="hint-title"><strong>Keyboard shortcuts</strong><button use:focusHelp onclick={() => (player.shortcutsOpen = false)} aria-label="Close keyboard shortcuts">×</button></div>

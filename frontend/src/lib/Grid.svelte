@@ -72,8 +72,9 @@
   function sortChanged() { if (sort === 'random') randomSeed = Math.random(); applySort(); }
   let favoritesOnly = $state(false);
   let details = $state.raw<Tile | null>(null);
+  export function closeDetails() { details = null; }
   $effect(() => { if (player.queueOpen || player.visOpen || player.view === 'share') details = null; });
-  const covered = $derived(!!details || player.queueOpen || player.shortcutsOpen);
+  const covered = $derived(!!details || player.queueOpen);
   const currentDetails = $derived.by(() => { const selected = details; return selected ? library.tiles.find(tile => tile.id === selected.id) || selected : null; });
   const filtersOpen = $derived(toolbar.mode === 'filters');
   let discoveryId = $state('');

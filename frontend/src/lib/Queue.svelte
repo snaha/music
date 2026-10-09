@@ -79,7 +79,7 @@
   if (menu) dismissActions(menu, false);
 }} />
 
-<ArtworkView covered={player.shortcutsOpen} id="player-view" className="now-playing" {palette} label="Now playing and queue" bind:listElement bind:bodyElement onkeydown={event => {
+<ArtworkView id="player-view" className="now-playing" {palette} label="Now playing and queue" bind:listElement bind:bodyElement onkeydown={event => {
   if (event.defaultPrevented) return;
   if ((event.target as HTMLElement).closest('.select-song') && !event.altKey && !event.ctrlKey && !event.metaKey && ['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
     event.preventDefault(); event.stopPropagation();

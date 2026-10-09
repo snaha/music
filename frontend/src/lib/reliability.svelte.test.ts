@@ -13,7 +13,7 @@ import { isElementVisible } from './dom';
 import { startRuntime } from './runtime';
 import { ui } from './ui-style.svelte';
 import { dig, coverRevision } from './discovery.svelte';
-import { artworkFocusScope, restoreFocusOnClose } from './artwork-focus';
+import { artworkFocusScope, restoreFocusOnClose, wrapArtworkTab } from './artwork-focus';
 import DigPanel from './DigPanel.svelte';
 import Queue from './Queue.svelte';
 import CollectionDetails from './CollectionDetails.svelte';
@@ -44,7 +44,7 @@ beforeEach(() => {
   session.api = api(); session.username = crypto.randomUUID(); session.base = 'http://localhost:1234';
   library.tiles = []; library.revision = 0;
   player.queue = []; player.index = -1; player.order = 'normal'; player.collectionOperations = []; player.error = ''; player.loadingCollectionId = ''; player.queueTab = 'queue';
-  player.queueOpen = false;
+  player.queueOpen = false; player.shortcutsOpen = false;
 });
 afterEach(() => { cleanup(); disposeCatalogSearch(); disposePlayback(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -280,6 +280,53 @@ describe('review regressions', () => {
     expect(background.inert).toBe(false); expect(toolbar.inert).toBe(false); expect(empty.inert).toBe(false);
     reset.focus(); expect(document.activeElement).toBe(reset);
   });
+  it('keeps the library and details interactive while non-modal shortcuts are open', async () => {
+    render(Grid, { tiles: [tile], onpick: () => {}, hidden: false });
+    player.shortcutsOpen = true; await tick();
+    const opener = document.querySelector<HTMLButtonElement>('.tile')!;
+    expect(document.querySelector<HTMLElement>('.scroll')!.inert).toBe(false);
+    expect(document.querySelector<HTMLElement>('.browse')!.inert).toBe(false);
+    opener.focus(); expect(document.activeElement).toBe(opener);
+    opener.click(); await tick();
+    const details = document.querySelector<HTMLElement>('.album-view')!;
+    expect(details.inert).toBe(false);
+    const back = details.querySelector<HTMLButtonElement>('[aria-label="Back to music"]')!;
+    back.focus(); expect(document.activeElement).toBe(back);
+    back.click(); await tick(); expect(document.querySelector('.album-view')).toBeNull();
+    player.shortcutsOpen = false;
+  });
+  it('restores playback focus when the artwork opener has been removed', async () => {
+    const opener = document.createElement('button');
+    const overlay = document.createElement('section');
+    const close = document.createElement('button'); overlay.append(close);
+    const fallback = document.createElement('button'); fallback.className = 'bar-toggle';
+    document.body.append(opener, overlay, fallback);
+    try {
+      opener.focus();
+      const dispose = artworkFocusScope(overlay); await tick();
+      opener.remove(); dispose(); overlay.remove(); await tick();
+      expect(document.activeElement).toBe(fallback);
+    } finally { opener.remove(); overlay.remove(); fallback.remove(); }
+  });
+  it('wraps artwork Tab boundaries without taking ownership from a native dialog', async () => {
+    const background = document.createElement('div'); background.inert = true;
+    background.append(document.createElement('button'));
+    const overlay = document.createElement('section'); overlay.className = 'artwork-view';
+    const first = document.createElement('button'); overlay.append(first);
+    const last = document.createElement('button');
+    const dialog = document.createElement('dialog'); dialog.append(document.createElement('button'));
+    document.body.append(background, overlay, last, dialog);
+    try {
+      last.focus();
+      const forward = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true });
+      wrapArtworkTab(forward); expect(forward.defaultPrevented).toBe(true); expect(document.activeElement).toBe(first);
+      const backward = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, cancelable: true });
+      wrapArtworkTab(backward); expect(backward.defaultPrevented).toBe(true); expect(document.activeElement).toBe(last);
+      dialog.showModal();
+      const native = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true });
+      wrapArtworkTab(native); expect(native.defaultPrevented).toBe(false); expect(dialog.contains(document.activeElement)).toBe(true);
+    } finally { dialog.close(); dialog.remove(); background.remove(); overlay.remove(); last.remove(); }
+  });
   it('restores the artwork opener without scrolling and yields to a competing focus owner', async () => {
     const opener = document.createElement('button');
     const overlay = document.createElement('section');
@@ -314,9 +361,8 @@ describe('review regressions', () => {
       const disposeLower = artworkFocusScope(lower); await tick();
       expect(document.activeElement).toBe(lowerButton);
       const disposeUpper = artworkFocusScope(upper); await tick();
-      lower.inert = true;
       expect(document.activeElement).toBe(upperButton);
-      lower.inert = false; disposeUpper(); upper.remove(); await tick();
+      disposeUpper(); upper.remove(); await tick();
       expect(document.activeElement).toBe(lowerButton);
       dialog.showModal(); input.focus();
       const disposeCovered = artworkFocusScope(lower); await tick();
@@ -359,7 +405,7 @@ describe('review regressions', () => {
     expect(dig.mood).toBe(75);
     dig.mood = 50; dig.energy = 50; dig.moodOn = false;
   });
-  it('restores shortcut focus after the covered Queue becomes interactive again', async () => {
+  it('restores shortcut focus to the still-interactive Queue', async () => {
     render(Queue, { onclose: () => {}, palette: '', options: createRawSnippet(() => ({ render: () => '<div></div>' })) });
     await tick();
     const opener = document.querySelector<HTMLButtonElement>('.now-playing button')!;
@@ -368,14 +414,14 @@ describe('review regressions', () => {
     try {
       const restore = restoreFocusOnClose(help, opener);
       player.shortcutsOpen = true; await tick();
+      expect(document.querySelector<HTMLElement>('.now-playing')!.inert).toBe(false);
       help.focus();
-      // Removal cleanup happens before Svelte updates the covered container.
       player.shortcutsOpen = false; restore(); help.remove(); await tick();
       expect(document.querySelector<HTMLElement>('.now-playing')!.inert).toBe(false);
       expect(document.activeElement).toBe(opener);
     } finally { player.shortcutsOpen = false; help.remove(); }
   });
-  it('leaves playback controls available and makes covered artwork yield to shortcuts', async () => {
+  it('leaves playback and Queue controls available under non-modal shortcuts', async () => {
     const bar = document.createElement('div');
     const playback = document.createElement('button'); bar.append(playback); document.body.append(bar);
     try {
@@ -383,9 +429,9 @@ describe('review regressions', () => {
       await tick();
       const overlay = document.querySelector<HTMLElement>('.now-playing')!;
       playback.focus(); expect(document.activeElement).toBe(playback);
-      player.shortcutsOpen = true; await tick(); expect(overlay.inert).toBe(true);
+      player.shortcutsOpen = true; await tick(); expect(overlay.inert).toBe(false);
       const close = overlay.querySelector<HTMLButtonElement>('button')!;
-      close.focus(); expect(document.activeElement).toBe(playback);
+      close.focus(); expect(document.activeElement).toBe(close);
       player.shortcutsOpen = false; await tick(); expect(overlay.inert).toBe(false);
       close.focus(); expect(document.activeElement).toBe(close);
     } finally { player.shortcutsOpen = false; bar.remove(); }

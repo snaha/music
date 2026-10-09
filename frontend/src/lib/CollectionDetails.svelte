@@ -43,7 +43,7 @@
   function keys(event: KeyboardEvent) { if (event.key !== 'Escape' || event.defaultPrevented) return; event.preventDefault(); event.stopPropagation(); if (preferences) preferences = false; else if (actions) { actions = false; document.querySelector<HTMLButtonElement>('[aria-label="Album menu"]')?.focus(); } else if (query) query = ''; else onclose(); }
   const fmt = (s = 0) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 </script>
-<ArtworkView covered={player.queueOpen || player.shortcutsOpen} className="album-view" {palette} label={`${tile.title} details`} onkeydown={keys}>
+<ArtworkView className="album-view" {palette} label={`${tile.title} details`} onkeydown={keys}>
   {#snippet header()}
     <button class="detail-icon" onclick={onclose} aria-label="Back to music"><Icon name="back" /></button>
     <div class="detail-heading"><h1>{tile.title}</h1><p>{tile.sub}{#if info.year} <span>{' · '}{info.year}</span>{/if}</p></div>
