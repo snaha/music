@@ -144,6 +144,12 @@ test('play reconciliation uses one page at every loaded depth and preserves matc
       assert.deepEqual(m.listeningHistory.entries.slice(1).map(entry => entry.id), before, 'loaded rows keep their surviving order');
       assert.equal(m.listeningHistory.total, total + 1);
       assert.equal(m.listeningHistory.hasMore, m.listeningHistory.entries.length < total + 1);
+      if (m.listeningHistory.hasMore) {
+        const loaded = m.listeningHistory.entries.map(entry => entry.id);
+        const next = await database.call('list', { scope: 'desktop:cost', query: '', offset: loaded.length, limit: 50 });
+        await m.searchHistory('', true);
+        assert.deepEqual(m.listeningHistory.entries.map(entry => entry.id), [...loaded, ...next.entries.map(entry => entry.id)], 'pagination after a connected reconciliation returns the next contiguous rows');
+      }
     }
     // Fully loaded history stays fully loaded after insertion and reconciliation.
     while (m.listeningHistory.hasMore) await m.searchHistory('', true);
@@ -211,4 +217,37 @@ test('play reconciliation uses one page at every loaded depth and preserves matc
     beforeAccount.release.resolve(); await otherSearch;
     assert.equal(m.listeningHistory.total, 0); assert.equal(m.listeningHistory.entries.length, 0, 'late reconciliation cannot cross accounts');
   } finally { m.disposeHistory(); await m.historyStats(); await database.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('reconciliation drops a disconnected filtered tail so older pages remain contiguous', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'music-history-gap-'));
+  const database = new MusicDatabase(path.join(directory, 'music.sqlite'));
+  let readUnavailable = false;
+  const bridge = {
+    write: args => database.call('write', args),
+    list: args => readUnavailable ? Promise.reject(new Error('read unavailable')) : database.call('list', args),
+    clear: scope => database.call('clear', { scope }),
+    stats: args => database.call('stats', args),
+  };
+  globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+  globalThis.window = { desktop: {}, musicHistory: bridge };
+  const m = await historyModule();
+  const context = { id: 'night', queue: [{ id: 'local:track:1', rawId: '1', source: 'local', title: 'Night song', cover: '', available: true }], order: 'normal', permutation: [] };
+  try {
+    m.session.username = 'gap';
+    await database.call('write', { version: 1, scope: 'desktop:gap', contexts: [context], entries: Array.from({ length: 160 }, (_, i) => ({ id: `seed-${i}`, contextId: context.id, index: 0, cursor: 0, playedAt: i + 1 })) });
+    m.loadHistory(); await m.searchHistory('night'); await m.searchHistory('night', true);
+    const before = m.listeningHistory.entries.map(entry => entry.id);
+    readUnavailable = true;
+    for (let i = 0; i < 60; i++) m.recordHistory(context, 0, 0);
+    await m.historyStats(); await waitForHistory(m.listeningHistory);
+    assert.deepEqual(m.listeningHistory.entries.map(entry => entry.id), before, 'failed reads retain the successful view');
+    readUnavailable = false; m.retryHistory(); await m.historyStats(); await waitForHistory(m.listeningHistory);
+    assert.equal(m.listeningHistory.entries.length, 50, 'a page with no connection to the loaded tail replaces it');
+    assert.equal(m.listeningHistory.hasMore, true);
+    await m.searchHistory('night', true);
+    const expected = await database.call('list', { scope: 'desktop:gap', query: 'night', offset: 0, limit: 100 });
+    assert.deepEqual(m.listeningHistory.entries.map(entry => entry.id), expected.entries.map(entry => entry.id), 'Load older plays returns exactly the next contiguous page');
+    assert.equal(m.listeningHistory.total, 220);
+  } finally { m.disposeHistory(); await m.historyStats().catch(() => {}); await database.close(); await rm(directory, { recursive: true, force: true }); }
 });

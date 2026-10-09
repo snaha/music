@@ -134,8 +134,11 @@ async function refreshHistory(query: string, { more = false, retainLoaded = fals
     const entries = result.entries.map(entry => ({ ...entry, context: contexts.get(entry.context.id) || entry.context }));
     const existingIds = new Set(listeningHistory.entries.map(entry => entry.id));
     if (reconcile && visibleQuery === query) {
-      const refreshedIds = new Set(entries.map(entry => entry.id));
-      listeningHistory.entries = [...entries, ...listeningHistory.entries.filter(entry => !refreshedIds.has(entry.id))];
+      // The last refreshed row must connect to the loaded tail. Without that
+      // boundary, retaining old rows would make offset pagination skip a gap.
+      const boundary = listeningHistory.entries.findIndex(entry => entry.id === entries.at(-1)?.id);
+      listeningHistory.entries = boundary >= 0 ? [...entries, ...listeningHistory.entries.slice(boundary + 1)] : entries;
+      requestedWindow = Math.max(50, listeningHistory.entries.length);
     } else {
       listeningHistory.entries = offset ? [...listeningHistory.entries, ...entries.filter(entry => !existingIds.has(entry.id))] : entries;
     }
