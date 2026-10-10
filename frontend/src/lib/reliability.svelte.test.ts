@@ -12,7 +12,7 @@ import { browseCollections, registerBrowseSource } from './browse-source';
 import { isElementVisible } from './dom';
 import { startRuntime } from './runtime';
 import { ui } from './ui-style.svelte';
-import { dig, coverRevision } from './discovery.svelte';
+import { dig, coverRevision, loadCatalog, metadata } from './discovery.svelte';
 import { artworkFocusScope } from './artwork-focus';
 import DigPanel from './DigPanel.svelte';
 import Queue from './Queue.svelte';
@@ -297,6 +297,13 @@ describe('review regressions', () => {
       upper.remove();
       results.remove();
     }
+  });
+  it('follows server stars for favorites and drops favorite overrides saved by earlier versions', async () => {
+    const key = `music.catalog.v1:${session.base}:${session.username}`;
+    writePreference(key, JSON.stringify({ [tile.id]: { favorite: true, genres: ['Jazz'] }, 'local:album:b': { favorite: false } }));
+    loadCatalog();
+    expect(metadata(tile).favorite).toBe(false); expect(metadata(tile).genres).toEqual(['Jazz']);
+    expect(metadata({ ...tile, id: 'local:album:b', favorite: true }).favorite).toBe(true);
   });
   it('lets the real Settings modal own focus above Queue and restores the queue control', async () => {
     play([track]);
