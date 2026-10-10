@@ -3,6 +3,8 @@
   import Button from './ui/button.svelte';
   import LibrarySelect from './ui/library-select.svelte';
   import { desktop } from './desktop.svelte';
+  import { ok, session } from './api.svelte';
+  import { library } from './library.svelte';
   let { portalTarget }: { portalTarget?: Element } = $props();
   let profiles = $state<ProfileEntry[]>([]), name = $state(''), busy = $state(''), error = $state('');
   const status = $derived(desktop.status);
@@ -20,6 +22,13 @@
     catch (failure) { error = (failure as Error).message; }
     finally { busy = ''; }
   }
+  async function rescan() {
+    const api = session.api; if (!api) return;
+    error = ''; library.scan.scanning = true;
+    // watchScan polls the status from here on and refreshes the library when the scan ends.
+    try { ok(await api.startScan()); }
+    catch (failure) { if (api === session.api) { error = (failure as Error).message; library.scan.scanning = false; } }
+  }
 </script>
 
 {#if status}
@@ -34,6 +43,7 @@
     <div class="actions">
       <Button variant="outline" disabled={!!busy} onclick={() => folder('add')}>Add music folder</Button>
       <Button variant="ghost" disabled={!!busy} onclick={() => folder('replace')}>Replace music folders</Button>
+      <Button variant="ghost" disabled={!!busy || !session.api || library.scan.scanning} onclick={rescan}>{library.scan.scanning ? 'Rescanning…' : 'Rescan'}</Button>
       <Button variant="ghost" onclick={async () => { const problem = await window.desktop!.showData(); if (problem) error = problem; }}>Show data folder</Button>
     </div>
     <details>
