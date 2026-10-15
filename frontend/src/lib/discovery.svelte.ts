@@ -6,7 +6,7 @@ import { artworkHue } from './artwork-palette';
 import type { Collection } from './music';
 
 export type Traits = { mood: number; energy: number; acoustic: number; vocal: number };
-export type AlbumMetadata = { favorite?: boolean; genres?: string[]; year?: number; traits?: Traits; hue?: number; colorRevision?: string; colorReady?: boolean };
+export type AlbumMetadata = { genres?: string[]; year?: number; traits?: Traits; hue?: number; colorRevision?: string; colorReady?: boolean };
 export const catalog = $state({ items: {} as Record<string, AlbumMetadata>, colors: {} as Record<string, Pick<AlbumMetadata, 'hue' | 'colorRevision' | 'colorReady'>>, stats: {} as Record<string, { plays: number; lastPlayed: number }>, error: '', colorsLoading: false });
 export const dig = $state({ open: false, moodOn: false, mood: 50, energy: 50, familiarity: 50, acoustic: 50, vocal: 50, preset: '' });
 export const digActive = () => dig.moodOn || dig.familiarity !== 50 || dig.acoustic !== 50 || dig.vocal !== 50;
@@ -25,8 +25,8 @@ function clean(value: unknown): AlbumMetadata {
   if (!value || typeof value !== 'object') return {};
   const item = value as AlbumMetadata;
   const traits = item.traits && ['mood', 'energy', 'acoustic', 'vocal'].every(key => Number.isFinite(item.traits![key as keyof Traits]) && item.traits![key as keyof Traits] >= 0 && item.traits![key as keyof Traits] <= 100) ? item.traits : undefined;
-  return { favorite: typeof item.favorite === 'boolean' ? item.favorite : undefined,
-    genres: Array.isArray(item.genres) ? item.genres.filter(genre => typeof genre === 'string').slice(0, 20) : undefined,
+  // favorite overrides saved by earlier versions are dropped: favorites follow the server's stars only
+  return { genres: Array.isArray(item.genres) ? item.genres.filter(genre => typeof genre === 'string').slice(0, 20) : undefined,
     year: Number.isInteger(item.year) && item.year! > 0 && item.year! <= 9999 ? item.year : undefined, traits,
     hue: Number.isFinite(item.hue) ? item.hue : undefined, colorRevision: typeof item.colorRevision === 'string' ? item.colorRevision : undefined, colorReady: item.colorReady === true };
 }
@@ -55,7 +55,7 @@ function flush() {
 function persist() { clearTimeout(saveTimer); saveTimer = setTimeout(flush, 200); }
 export function metadata(tile: Collection) {
   const item = catalog.items[tile.id];
-  return { favorite: item?.favorite ?? tile.favorite ?? false, genres: item?.genres ?? tile.genres ?? [], year: item?.year ?? tile.year, traits: item?.traits };
+  return { favorite: tile.favorite ?? false, genres: item?.genres ?? tile.genres ?? [], year: item?.year ?? tile.year, traits: item?.traits };
 }
 export function digScore(tile: Collection) {
   if (!digActive()) return 1;
