@@ -18,6 +18,8 @@ import DigPanel from './DigPanel.svelte';
 import Queue from './Queue.svelte';
 import CollectionDetails from './CollectionDetails.svelte';
 import Settings from './Settings.svelte';
+import ProfileSettings from './ProfileSettings.svelte';
+import { desktop } from './desktop.svelte';
 import type { Collection, Track } from './music';
 
 const tile: Collection = { id: 'local:album:a', rawId: 'a', source: 'local', kind: 'album', title: 'Album', sub: 'Artist', cover: '', count: 2, available: true };
@@ -313,6 +315,27 @@ describe('review regressions', () => {
     await vi.waitFor(() => expect(onclose).toHaveBeenCalledOnce());
     await settings.unmount(); await tick();
     expect(document.activeElement).toBe(opener);
+  });
+  it('keeps Rescan owned by its pending start while polls report idle and a late failure only reports itself', async () => {
+    const start = deferred<ReturnType<typeof ok>>();
+    session.api = api({ startScan: vi.fn(() => start.promise) });
+    library.scan = { scanning: false, count: 0, checked: true, error: '' };
+    desktop.status = { phase: 'ready', error: '', onboarding: false, url: '', username: '', password: '', frame: true, build: { version: '0', channel: '', commit: '', branch: '', builtAt: '', runUrl: '' },
+      profile: { name: 'default', label: 'Default', directory: '/data', existing: false } as DesktopStatus['profile'], musicFolder: '/music', musicFolders: ['/music'], defaultMusicFolder: '/music', defaultMusicFolderAvailable: true, source: 'folder', canCopy: false };
+    vi.stubGlobal('desktop', { profiles: vi.fn(async () => []) });
+    render(ProfileSettings, {}); await tick();
+    const rescan = [...document.querySelectorAll<HTMLButtonElement>('.profile-settings .actions button')].find(button => button.textContent?.trim() === 'Rescan')!;
+    rescan.click(); await tick();
+    expect(rescan.disabled).toBe(true); expect(rescan.textContent?.trim()).toBe('Rescanning…');
+    library.scan = { scanning: false, count: 0, checked: true, error: '' }; await tick(); // an idle poll answers before the start does
+    expect(rescan.disabled).toBe(true);
+    expect(session.api!.startScan).toHaveBeenCalledOnce();
+    library.scan = { scanning: true, count: 3, checked: true, error: '' }; await tick(); // the poll sees the scan running
+    start.reject(new Error('start timed out')); await vi.waitFor(() => expect(document.querySelector('.profile-settings')?.textContent).toContain('start timed out'));
+    expect(library.scan.scanning).toBe(true); expect(rescan.disabled).toBe(true); expect(rescan.textContent?.trim()).toBe('Rescanning…');
+    library.scan = { scanning: false, count: 3, checked: true, error: '' }; await tick();
+    expect(rescan.disabled).toBe(false); expect(rescan.textContent?.trim()).toBe('Rescan');
+    desktop.status = null;
   });
   it('previews a Dig drag without reranking until release and keeps keyboard control immediate', async () => {
     dig.mood = 50; dig.energy = 50; dig.moodOn = false;
