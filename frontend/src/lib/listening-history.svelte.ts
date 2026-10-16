@@ -6,13 +6,17 @@ import type { Collection, Track } from './music';
 import type { PlaybackOrigin, ListeningContext, HistoryEntry } from '../../../shared/contracts';
 export type { PlaybackOrigin, ListeningContext, HistoryEntry } from '../../../shared/contracts';
 export type ListeningStats = Record<string, { plays: number; lastPlayed: number }>;
+const HISTORY_PAGE_SIZE = 50;
 const browserStats = $state({ values: {} as ListeningStats });
 export const listeningHistory = $state({ persistedRevision: 0, entries: [] as HistoryEntry[], total: 0, hasMore: false, loading: false, query: '', error: '' });
 let account = '';
 let persistenceTimer: ReturnType<typeof setTimeout> | undefined;
 let operations: Promise<unknown> = Promise.resolve();
 let queryRevision = 0;
-let requestedWindow = 50;
+// An explicit older-page request survives failed or superseded reads until its
+// window is published. Routine playback refreshes have no pending window.
+let pendingWindow = 0;
+let visibleQuery = '';
 const pendingClears = new Set<string>();
 const queuedContexts = new Map<string, Set<string>>();
 const unsaved = new Map<string, ReturnType<typeof snapshot>[]>();
@@ -35,7 +39,8 @@ export function loadHistory() {
   browserStats.values = {};
   account = next; listeningHistory.entries = []; listeningHistory.query = ''; listeningHistory.total = 0; listeningHistory.hasMore = false; listeningHistory.error = '';
   queryRevision++;
-  requestedWindow = 50;
+  pendingWindow = 0;
+  visibleQuery = '';
   try {
     const data = readJsonPreference<{ contexts?: unknown; entries?: unknown; stats?: unknown } | null>(account, null);
     if (!data || !Array.isArray(data.contexts) || !Array.isArray(data.entries)) throw new Error('No legacy history');
@@ -91,15 +96,21 @@ function persist(entries = listeningHistory.entries, changedContext?: ListeningC
   if (writePreference(account, JSON.stringify({ ...batch, stats: $state.snapshot(browserStats.values) }))) { listeningHistory.persistedRevision++; listeningHistory.error = ''; }
   else listeningHistory.error = 'Browser storage is full. Your current session is still available.';
 }
-export async function searchHistory(query = listeningHistory.query, more = false, retainLoaded = false) {
+export function searchHistory(query = listeningHistory.query, more = false) {
+  return refreshHistory(query, { more });
+}
+async function refreshHistory(query: string, { more = false, reconcile = false }: { more?: boolean; reconcile?: boolean } = {}) {
   loadHistory();
   const revision = ++queryRevision;
   const activeAccount = account;
   const sameQuery = query === listeningHistory.query;
-  const offset = more && sameQuery ? listeningHistory.entries.length : 0;
-  if (!sameQuery || (!more && !retainLoaded)) requestedWindow = 50;
-  else requestedWindow = Math.max(requestedWindow, listeningHistory.entries.length) + (more ? 50 : 0);
-  const target = requestedWindow;
+  const continuingQuery = sameQuery && visibleQuery === query;
+  const offset = more && continuingQuery ? listeningHistory.entries.length : 0;
+  if (!sameQuery || (!more && !reconcile)) pendingWindow = 0;
+  if (more && continuingQuery && !pendingWindow) pendingWindow = offset + HISTORY_PAGE_SIZE;
+  // Routine playback reads one page. A pending user request owns its larger
+  // window across playback and Retry; repeated Load older clicks retry it.
+  const target = pendingWindow || HISTORY_PAGE_SIZE;
   listeningHistory.query = query;
   const bridge = window.musicHistory;
   const activeScope = scope();
@@ -112,7 +123,7 @@ export async function searchHistory(query = listeningHistory.query, more = false
       const entries: HistoryEntry[] = [];
       let total = 0, hasMore = false;
       do {
-        const page = await bridge.list({ scope: activeScope, query, offset: offset + entries.length, limit: Math.min(50, target - offset - entries.length) });
+        const page = await bridge.list({ scope: activeScope, query, offset: offset + entries.length, limit: Math.min(HISTORY_PAGE_SIZE, target - offset - entries.length) });
         if (revision !== queryRevision || activeAccount !== account) return;
         if (!Array.isArray(page.entries) || !page.entries.every(entry => isListeningContext(entry.context) && Number.isInteger(entry.index) && !!entry.context.queue[entry.index]) || !Number.isInteger(page.total) || page.total < 0) throw new Error('Invalid history response');
         entries.push(...page.entries);
@@ -125,10 +136,19 @@ export async function searchHistory(query = listeningHistory.query, more = false
     if (!result || revision !== queryRevision || activeAccount !== account) return;
     const contexts = new Map(listeningHistory.entries.map(entry => [entry.context.id, entry.context]));
     const entries = result.entries.map(entry => ({ ...entry, context: contexts.get(entry.context.id) || entry.context }));
-    const existingIds = new Set(listeningHistory.entries.map(entry => entry.id));
-    listeningHistory.entries = offset ? [...listeningHistory.entries, ...entries.filter(entry => !existingIds.has(entry.id))] : entries;
+    if (reconcile && visibleQuery === query) {
+      // The last refreshed row must connect to the loaded tail. Without that
+      // boundary, retaining old rows would make offset pagination skip a gap.
+      const boundary = listeningHistory.entries.findIndex(entry => entry.id === entries.at(-1)?.id);
+      listeningHistory.entries = boundary >= 0 ? [...entries, ...listeningHistory.entries.slice(boundary + 1)] : entries;
+    } else {
+      const existingIds = new Set(listeningHistory.entries.map(entry => entry.id));
+      listeningHistory.entries = offset ? [...listeningHistory.entries, ...entries.filter(entry => !existingIds.has(entry.id))] : entries;
+    }
+    pendingWindow = 0;
+    visibleQuery = query;
     listeningHistory.total = result.total;
-    listeningHistory.hasMore = result.hasMore;
+    listeningHistory.hasMore = reconcile ? result.total > listeningHistory.entries.length : result.hasMore;
     listeningHistory.error = '';
   } catch { /* enqueue reports a recoverable error; keep the visible list. */ }
   finally { if (revision === queryRevision) listeningHistory.loading = false; }
@@ -140,10 +160,11 @@ export function recordHistory(context: ListeningContext, index: number, cursor: 
   if (!window.musicHistory || !listeningHistory.query.trim()) {
     listeningHistory.entries.unshift(entry);
     listeningHistory.total++;
+    if (pendingWindow) pendingWindow++;
   }
   if (window.musicHistory) {
     void persist([entry], undefined, true);
-    void searchHistory(listeningHistory.query, false, true);
+    void refreshHistory(listeningHistory.query, { reconcile: true });
   } else {
     countEntry(entry, browserStats.values);
     saveHistory();
@@ -156,9 +177,13 @@ export function saveHistory(context?: ListeningContext) {
   if (window.musicHistory) { void persist(context ? [] : listeningHistory.entries, context); return; }
   persistenceTimer = setTimeout(() => { void persist(); }, 250);
 }
-export function retryHistory() { if (pendingClears.has(scope())) clearHistory(); else void persist(); void searchHistory(listeningHistory.query, false, true); }
+export function retryHistory() {
+  if (pendingClears.has(scope())) clearHistory();
+  else void persist();
+  void refreshHistory(listeningHistory.query, { reconcile: true });
+}
 export function clearHistory() {
-  loadHistory(); clearTimeout(persistenceTimer); queryRevision++; requestedWindow = 50;
+  loadHistory(); clearTimeout(persistenceTimer); queryRevision++; pendingWindow = 0;
   browserStats.values = {};
   listeningHistory.entries = []; listeningHistory.total = 0; listeningHistory.hasMore = false; listeningHistory.loading = false;
   if (window.musicHistory) {
@@ -204,4 +229,4 @@ export async function historyStats(): Promise<ListeningStats | undefined> {
   return stats;
 }
 
-export function disposeHistory() { clearTimeout(persistenceTimer); queryRevision++; if (account) void persist(); }
+export function disposeHistory() { clearTimeout(persistenceTimer); queryRevision++; pendingWindow = 0; if (account) void persist(); }
